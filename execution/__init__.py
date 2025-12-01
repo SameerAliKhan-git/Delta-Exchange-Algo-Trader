@@ -9,6 +9,7 @@ Provides:
 
 from .client import (
     DeltaClient,
+    APIConfig,
     OrderSide,
     OrderType,
     TimeInForce,
@@ -28,6 +29,7 @@ from .position_manager import (
 __all__ = [
     # Client
     "DeltaClient",
+    "APIConfig",
     "OrderSide",
     "OrderType",
     "TimeInForce",

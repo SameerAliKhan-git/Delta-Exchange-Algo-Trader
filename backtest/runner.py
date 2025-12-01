@@ -142,15 +142,17 @@ class BacktestRunner:
             close = data.closes[i]
             volume = data.volumes[i]
             
-            # Build history for strategy
-            candle = {
-                'timestamp': timestamp,
-                'open': open_price,
-                'high': high,
-                'low': low,
-                'close': close,
-                'volume': volume
-            }
+            # Build Candle object for strategy
+            from strategies.base import Candle
+            from datetime import datetime
+            candle = Candle(
+                timestamp=datetime.fromtimestamp(timestamp),
+                open=open_price,
+                high=high,
+                low=low,
+                close=close,
+                volume=volume
+            )
             
             # Check stops first (using high/low of candle)
             self._check_stops(high, low, timestamp)

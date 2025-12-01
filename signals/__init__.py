@@ -5,6 +5,7 @@ Provides:
 - Technical indicators (EMA, RSI, ATR, MACD, Bollinger Bands)
 - Order book analysis (imbalance, depth, wall detection)
 - Sentiment analysis (social, news, composite)
+- Advanced Order Flow analysis (CVD, absorption, whale detection)
 """
 
 from .technical import (
@@ -23,6 +24,15 @@ from .sentiment import (
     lexicon_sentiment, sentiment_to_signal,
     get_fear_greed_index, SentimentResult
 )
+from .orderflow_advanced import (
+    OrderFlowAnalyzer,
+    OrderFlowSignal,
+    Trade,
+    FootprintBar,
+    FootprintLevel,
+    TradeAggression,
+    FlowType
+)
 
 __all__ = [
     # Technical
@@ -38,5 +48,15 @@ __all__ = [
     'get_composite_sentiment', 'analyze_text_sentiment',
     'get_social_sentiment', 'get_news_sentiment',
     'lexicon_sentiment', 'sentiment_to_signal',
-    'get_fear_greed_index', 'SentimentResult'
+    'get_fear_greed_index', 'SentimentResult',
+    
+    # Advanced Order Flow
+    'OrderFlowAnalyzer',
+    'OrderFlowSignal',
+    'Trade',
+    'FootprintBar',
+    'FootprintLevel',
+    'TradeAggression',
+    'FlowType'
 ]
+
