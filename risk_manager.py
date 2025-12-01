@@ -1,14 +1,15 @@
 """
 Risk Manager for Delta Exchange Algo Trading Bot
-Enforces strict risk controls and position sizing
+Enforces strict risk controls and position sizing with capital-aware calculations
 """
 
 import time
 from datetime import datetime, date
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 import threading
+import math
 
 from config import get_config
 from logger import get_logger, get_audit_logger
@@ -61,6 +62,23 @@ class DailyStats:
     largest_loss: float = 0.0
 
 
+@dataclass
+class AccountState:
+    """Current account state from exchange"""
+    available_balance: float = 0.0
+    wallet_balance: float = 0.0
+    unrealized_pnl: float = 0.0
+    margin_used: float = 0.0
+    equity: float = 0.0
+    currency: str = "USDT"
+    last_updated: datetime = field(default_factory=datetime.utcnow)
+    
+    @property
+    def free_margin(self) -> float:
+        """Available margin for new positions"""
+        return max(0, self.available_balance - self.margin_used)
+
+
 class RiskManager:
     """
     Risk management engine
@@ -98,6 +116,15 @@ class RiskManager:
         
         # Initialize today's stats
         self._get_or_create_daily_stats(date.today())
+        
+        # Account state cache
+        self._account_state: Optional[AccountState] = None
+        self._account_state_ttl = 30  # Refresh every 30 seconds
+        self._last_account_fetch: float = 0
+        
+        # Capital-aware sizing parameters
+        self.exposure_pct = getattr(self.config.risk, 'exposure_pct', 0.25)
+        self.option_max_premium_pct = getattr(self.config.risk, 'option_max_premium_pct', 0.005)
     
     def _get_or_create_daily_stats(self, day: date) -> DailyStats:
         """Get or create daily statistics"""
@@ -506,6 +533,340 @@ class RiskManager:
         if today not in self._daily_stats:
             self._daily_stats[today] = DailyStats(date=today)
             self.logger.info("Daily stats reset for new trading day")
+    
+    # ============== Capital-Aware Sizing Methods ==============
+    
+    def fetch_account_state(self, force_refresh: bool = False) -> AccountState:
+        """
+        Fetch current account state from exchange
+        
+        Args:
+            force_refresh: Bypass cache and fetch fresh data
+        
+        Returns:
+            AccountState with current balances and margin info
+        """
+        now = time.time()
+        
+        # Use cached state if still valid
+        if (not force_refresh and 
+            self._account_state is not None and 
+            (now - self._last_account_fetch) < self._account_state_ttl):
+            return self._account_state
+        
+        try:
+            balances = self.client.get_wallet_balances()
+            
+            # Aggregate all balances (typically USDT for Delta India)
+            total_available = 0.0
+            total_balance = 0.0
+            currency = "USDT"
+            
+            for bal in balances:
+                asset = bal.get('asset', bal.get('currency', ''))
+                available = float(bal.get('available_balance', 0) or 0)
+                balance = float(bal.get('balance', bal.get('wallet_balance', 0)) or 0)
+                
+                # Prefer USDT/USD balances
+                if asset.upper() in ('USDT', 'USD', 'INR'):
+                    total_available += available
+                    total_balance += balance
+                    currency = asset.upper()
+            
+            # Get margin info if available
+            margin_used = 0.0
+            unrealized_pnl = 0.0
+            
+            try:
+                positions = self.client.get_positions()
+                for pos in positions:
+                    margin_used += float(pos.get('margin', 0) or 0)
+                    unrealized_pnl += float(pos.get('unrealized_pnl', 0) or 0)
+            except Exception:
+                pass
+            
+            equity = total_balance + unrealized_pnl
+            
+            self._account_state = AccountState(
+                available_balance=total_available,
+                wallet_balance=total_balance,
+                unrealized_pnl=unrealized_pnl,
+                margin_used=margin_used,
+                equity=equity,
+                currency=currency,
+                last_updated=datetime.utcnow()
+            )
+            self._last_account_fetch = now
+            
+            self.logger.debug(
+                "Account state fetched",
+                available=total_available,
+                balance=total_balance,
+                equity=equity,
+                currency=currency
+            )
+            
+            return self._account_state
+            
+        except Exception as e:
+            self.logger.error("Failed to fetch account state", error=str(e))
+            # Return cached state or empty state
+            if self._account_state:
+                return self._account_state
+            return AccountState()
+    
+    def compute_futures_size(
+        self,
+        entry_price: float,
+        stop_price: float,
+        exposure_pct: Optional[float] = None,
+        risk_per_trade_pct: Optional[float] = None,
+        contract_multiplier: float = 1.0,
+        min_size: float = 0.001,
+        max_size: Optional[float] = None
+    ) -> Tuple[float, Dict[str, Any]]:
+        """
+        Compute capital-aware futures position size
+        
+        Formula:
+            notional_cap = available_cash * exposure_pct
+            size_by_exposure = notional_cap / entry_price
+            
+            risk_per_unit = |entry_price - stop_price|
+            risk_budget = available_cash * risk_per_trade_pct
+            size_by_risk = risk_budget / risk_per_unit
+            
+            final_size = min(size_by_exposure, size_by_risk)
+        
+        Args:
+            entry_price: Expected entry price
+            stop_price: Stop loss price
+            exposure_pct: Max % of capital for notional exposure (default: config)
+            risk_per_trade_pct: Max % of capital to risk (default: config)
+            contract_multiplier: Contract multiplier (for futures contracts)
+            min_size: Minimum tradeable size
+            max_size: Maximum position size (default: config)
+        
+        Returns:
+            (position_size, sizing_details)
+        """
+        account = self.fetch_account_state()
+        available_cash = account.available_balance
+        
+        if available_cash <= 0:
+            return 0.0, {"error": "No available balance"}
+        
+        # Use defaults from config
+        exp_pct = exposure_pct or self.exposure_pct
+        risk_pct = risk_per_trade_pct or (self.risk_per_trade / available_cash if available_cash > 0 else 0.01)
+        max_sz = max_size or self.max_position_size
+        
+        # Calculate stop distance
+        stop_distance = abs(entry_price - stop_price)
+        if stop_distance <= 0:
+            return 0.0, {"error": "Invalid stop distance"}
+        
+        # Size by exposure
+        notional_cap = available_cash * exp_pct
+        size_by_exposure = notional_cap / (entry_price * contract_multiplier)
+        
+        # Size by risk
+        risk_per_unit = stop_distance * contract_multiplier
+        risk_budget = available_cash * risk_pct
+        size_by_risk = risk_budget / risk_per_unit
+        
+        # Final size is the smaller of the two
+        raw_size = min(size_by_exposure, size_by_risk)
+        
+        # Apply floor and ceiling
+        final_size = max(min_size, min(raw_size, max_sz))
+        
+        # Round to appropriate precision
+        final_size = round(final_size, 4)
+        
+        details = {
+            "available_cash": available_cash,
+            "exposure_pct": exp_pct,
+            "risk_pct": risk_pct,
+            "entry_price": entry_price,
+            "stop_price": stop_price,
+            "stop_distance": stop_distance,
+            "notional_cap": notional_cap,
+            "size_by_exposure": size_by_exposure,
+            "risk_budget": risk_budget,
+            "size_by_risk": size_by_risk,
+            "raw_size": raw_size,
+            "final_size": final_size,
+            "limiting_factor": "exposure" if size_by_exposure < size_by_risk else "risk"
+        }
+        
+        self.logger.debug("Futures size computed", **details)
+        
+        return final_size, details
+    
+    def compute_option_contracts(
+        self,
+        option_premium: float,
+        max_premium_pct: Optional[float] = None,
+        min_contracts: int = 1,
+        max_contracts: int = 100,
+        contract_size: float = 1.0
+    ) -> Tuple[int, Dict[str, Any]]:
+        """
+        Compute number of option contracts based on premium affordability
+        
+        Formula:
+            max_spend = available_cash * max_premium_pct
+            contracts = floor(max_spend / (option_premium * contract_size))
+        
+        Args:
+            option_premium: Premium per contract
+            max_premium_pct: Max % of capital for options premium (default: 0.5%)
+            min_contracts: Minimum contracts to buy
+            max_contracts: Maximum contracts limit
+            contract_size: Contract multiplier
+        
+        Returns:
+            (num_contracts, sizing_details)
+        """
+        account = self.fetch_account_state()
+        available_cash = account.available_balance
+        
+        if available_cash <= 0:
+            return 0, {"error": "No available balance"}
+        
+        if option_premium <= 0:
+            return 0, {"error": "Invalid option premium"}
+        
+        # Use default from config
+        prem_pct = max_premium_pct or self.option_max_premium_pct
+        
+        # Calculate max spend on premium
+        max_spend = available_cash * prem_pct
+        
+        # Calculate affordable contracts
+        cost_per_contract = option_premium * contract_size
+        raw_contracts = max_spend / cost_per_contract
+        
+        # Floor to whole number and apply limits
+        num_contracts = max(min_contracts, min(int(raw_contracts), max_contracts))
+        
+        # Check if we can actually afford minimum
+        total_cost = num_contracts * cost_per_contract
+        if total_cost > max_spend and num_contracts > min_contracts:
+            num_contracts = max(min_contracts, int(raw_contracts))
+            total_cost = num_contracts * cost_per_contract
+        
+        details = {
+            "available_cash": available_cash,
+            "max_premium_pct": prem_pct,
+            "option_premium": option_premium,
+            "contract_size": contract_size,
+            "max_spend": max_spend,
+            "cost_per_contract": cost_per_contract,
+            "raw_contracts": raw_contracts,
+            "final_contracts": num_contracts,
+            "total_cost": total_cost,
+            "pct_of_capital": total_cost / available_cash if available_cash > 0 else 0
+        }
+        
+        self.logger.debug("Option contracts computed", **details)
+        
+        return num_contracts, details
+    
+    def validate_trade_affordability(
+        self,
+        instrument_type: str,  # 'futures' or 'options'
+        size: float,
+        price: float,
+        premium: Optional[float] = None
+    ) -> RiskCheckResult:
+        """
+        Validate if a trade is affordable with current capital
+        
+        Args:
+            instrument_type: 'futures' or 'options'
+            size: Position size or number of contracts
+            price: Entry price (for futures) or not used (for options)
+            premium: Option premium (for options only)
+        
+        Returns:
+            RiskCheckResult with validation status
+        """
+        account = self.fetch_account_state()
+        available = account.available_balance
+        
+        if available <= 0:
+            return RiskCheckResult(
+                allowed=False,
+                violation=RiskViolation.INSUFFICIENT_BALANCE,
+                message="No available balance"
+            )
+        
+        if instrument_type == 'futures':
+            # Check notional exposure
+            notional = size * price
+            max_notional = available * self.exposure_pct
+            
+            if notional > max_notional:
+                max_size = max_notional / price
+                return RiskCheckResult(
+                    allowed=False,
+                    violation=RiskViolation.MAX_POSITION_SIZE,
+                    message=f"Notional {notional:.2f} exceeds max {max_notional:.2f}",
+                    adjusted_size=round(max_size, 4)
+                )
+            
+            # Check margin (simplified 10% margin requirement)
+            required_margin = notional * 0.1
+            if required_margin > account.free_margin:
+                return RiskCheckResult(
+                    allowed=False,
+                    violation=RiskViolation.INSUFFICIENT_BALANCE,
+                    message=f"Insufficient margin: need {required_margin:.2f}, have {account.free_margin:.2f}"
+                )
+        
+        elif instrument_type == 'options':
+            if premium is None:
+                return RiskCheckResult(
+                    allowed=False,
+                    violation=RiskViolation.INVALID_SIZE,
+                    message="Option premium required for options trades"
+                )
+            
+            # Check total premium cost
+            total_cost = size * premium
+            max_spend = available * self.option_max_premium_pct
+            
+            if total_cost > max_spend:
+                max_contracts = int(max_spend / premium)
+                return RiskCheckResult(
+                    allowed=False,
+                    violation=RiskViolation.MAX_POSITION_SIZE,
+                    message=f"Premium cost {total_cost:.2f} exceeds max {max_spend:.2f}",
+                    adjusted_size=max_contracts
+                )
+        
+        return RiskCheckResult(allowed=True, message="Trade is affordable")
+    
+    def get_capital_metrics(self) -> Dict[str, Any]:
+        """Get current capital and sizing metrics"""
+        account = self.fetch_account_state()
+        
+        return {
+            "available_balance": account.available_balance,
+            "wallet_balance": account.wallet_balance,
+            "unrealized_pnl": account.unrealized_pnl,
+            "equity": account.equity,
+            "margin_used": account.margin_used,
+            "free_margin": account.free_margin,
+            "currency": account.currency,
+            "exposure_pct": self.exposure_pct,
+            "option_max_premium_pct": self.option_max_premium_pct,
+            "max_notional_exposure": account.available_balance * self.exposure_pct,
+            "max_option_spend": account.available_balance * self.option_max_premium_pct,
+            "last_updated": account.last_updated.isoformat()
+        }
 
 
 # Singleton instance

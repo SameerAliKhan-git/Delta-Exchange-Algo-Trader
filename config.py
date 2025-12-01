@@ -55,11 +55,27 @@ class RiskConfig(BaseSettings):
     trailing_stop_pct: float = Field(default=0.015, alias="TRAILING_STOP_PCT")
     max_position_size: float = Field(default=10.0, alias="MAX_POSITION_SIZE")
     
+    # Capital-aware sizing (V2)
+    exposure_pct: float = Field(default=0.25, alias="EXPOSURE_PCT")
+    option_max_premium_pct: float = Field(default=0.005, alias="OPTION_MAX_PREMIUM_PCT")
+    confidence_threshold: float = Field(default=0.65, alias="CONFIDENCE_THRESHOLD")
+    min_liquidity_usd: float = Field(default=1000.0, alias="MIN_LIQUIDITY_USD")
+    option_target_delta: float = Field(default=0.35, alias="OPTION_TARGET_DELTA")
+    option_min_expiry_days: int = Field(default=3, alias="OPTION_MIN_EXPIRY_DAYS")
+    option_max_expiry_days: int = Field(default=30, alias="OPTION_MAX_EXPIRY_DAYS")
+    
     @field_validator("risk_per_trade_inr", "max_daily_loss_inr")
     @classmethod
     def validate_positive(cls, v):
         if v <= 0:
             raise ValueError("Value must be positive")
+        return v
+    
+    @field_validator("exposure_pct", "option_max_premium_pct", "confidence_threshold")
+    @classmethod
+    def validate_percentage(cls, v):
+        if not 0 < v <= 1:
+            raise ValueError("Percentage must be between 0 and 1")
         return v
 
 
