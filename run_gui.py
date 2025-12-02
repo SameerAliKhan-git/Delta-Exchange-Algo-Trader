@@ -1,8 +1,10 @@
 """
 Launch the Delta Exchange Algo Trader GUI
 ==========================================
-Professional trading interface with candlestick charts,
-order book visualization, and strategy controls.
+Professional trading interface with REAL-TIME market data,
+candlestick charts, order book visualization, and trading controls.
+
+Data is fetched LIVE from Delta Exchange API.
 """
 
 import sys
@@ -15,7 +17,7 @@ def main():
     """Launch the trading GUI"""
     print("=" * 60)
     print("🤖 DELTA EXCHANGE ALGO TRADER v4.0")
-    print("   Renaissance Edition - Professional Trading Interface")
+    print("   Renaissance Edition - Real-Time Trading Interface")
     print("=" * 60)
     print()
     
@@ -43,12 +45,22 @@ def main():
         print("❌ NumPy not available. Please install: pip install numpy")
         sys.exit(1)
     
+    try:
+        import requests
+        print("✅ Requests available (for live API)")
+    except ImportError:
+        print("⚠️  Requests not installed. Installing...")
+        import subprocess
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'requests', '-q'])
+        print("✅ Requests installed")
+    
     print()
-    print("🚀 Launching GUI...")
+    print("📡 Connecting to Delta Exchange LIVE API...")
+    print("🚀 Launching Real-Time Trading GUI...")
     print()
     
     from gui import launch_gui
-    launch_gui()
+    launch_gui(testnet=False)  # Use LIVE API for real market data
 
 
 if __name__ == '__main__':

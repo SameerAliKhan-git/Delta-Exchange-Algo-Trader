@@ -1,9 +1,13 @@
 """
-GUI Module - Professional Trading Interface
-============================================
-Features candlestick charts, real-time graphs, and trading controls.
+GUI Module - Professional Real-Time Trading Interface
+======================================================
+Live market data, candlestick charts, order book, and trading controls.
 """
 
-from .main_window import TradingGUI, launch_gui
+from .main_window import TradingGUI, run_app
 
-__all__ = ['TradingGUI', 'launch_gui']
+def launch_gui(testnet: bool = False):
+    """Launch the trading GUI"""
+    run_app(testnet=testnet)
+
+__all__ = ['TradingGUI', 'run_app', 'launch_gui']

@@ -1,1159 +1,1160 @@
 """
-Professional Trading GUI - Main Window
-=======================================
-A professional trading interface inspired by TradingView and Bloomberg Terminal.
-
-Features:
-- Real-time candlestick charts with OHLCV data
-- Technical indicator overlays (EMA, Bollinger Bands, etc.)
-- Volume bars
-- Order book visualization
-- Position management panel
-- Strategy control panel
-- Live P&L tracking
-- Dark theme professional design
+Professional Real-Time Trading GUI for Delta Exchange
+Connects to live market data via Delta Exchange API
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 import threading
 import queue
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Callable
-import numpy as np
+from typing import Dict, List, Optional, Tuple
+import json
 
-# Try to import matplotlib
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
 try:
     import matplotlib
     matplotlib.use('TkAgg')
     import matplotlib.pyplot as plt
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     from matplotlib.figure import Figure
     import matplotlib.dates as mdates
     from matplotlib.patches import Rectangle
-    from matplotlib.lines import Line2D
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
-    print("Warning: matplotlib not installed. Install with: pip install matplotlib")
+
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 
 
-# Color scheme - Dark theme inspired by TradingView
-COLORS = {
-    'bg_dark': '#131722',
-    'bg_panel': '#1E222D',
-    'bg_card': '#2A2E39',
-    'bg_input': '#363A45',
-    'text_primary': '#D1D4DC',
-    'text_secondary': '#787B86',
-    'text_muted': '#4A4E59',
-    'accent_blue': '#2962FF',
-    'accent_cyan': '#00BCD4',
-    'green': '#26A69A',
-    'red': '#EF5350',
-    'orange': '#FF9800',
-    'yellow': '#FFEB3B',
-    'purple': '#9C27B0',
-    'border': '#363A45',
-    'candle_up': '#26A69A',
-    'candle_down': '#EF5350',
-    'volume_up': '#26A69A80',
-    'volume_down': '#EF535080',
-}
+# ==================== Color Theme ====================
+class Theme:
+    """Professional dark trading terminal theme"""
+    BG_PRIMARY = "#0d1117"
+    BG_SECONDARY = "#161b22"
+    BG_TERTIARY = "#21262d"
+    TEXT_PRIMARY = "#e6edf3"
+    TEXT_SECONDARY = "#8b949e"
+    TEXT_MUTED = "#6e7681"
+    ACCENT = "#58a6ff"
+    SUCCESS = "#3fb950"
+    DANGER = "#f85149"
+    WARNING = "#d29922"
+    BORDER = "#30363d"
+    CANDLE_UP = "#00C853"
+    CANDLE_DOWN = "#FF1744"
+    VOLUME_UP = "#00C85355"
+    VOLUME_DOWN = "#FF174455"
 
 
-class CandlestickChart:
-    """Professional candlestick chart with indicators"""
+# ==================== Real-Time Data Fetcher ====================
+class RealTimeDataFetcher:
+    """Fetches real market data from Delta Exchange API"""
     
-    def __init__(self, parent_frame, width=800, height=500):
-        self.parent = parent_frame
+    def __init__(self, testnet: bool = False):
+        self.testnet = testnet
+        if testnet:
+            self.base_url = "https://cdn-ind.testnet.deltaex.org"
+        else:
+            self.base_url = "https://api.india.delta.exchange"
+        
+        self.session = requests.Session() if HAS_REQUESTS else None
+        self.symbols_cache = {}
+        self.product_id_map = {}
+    
+    def get_products(self) -> List[Dict]:
+        """Get all available products"""
+        try:
+            resp = self.session.get(f"{self.base_url}/v2/products", timeout=10)
+            data = resp.json()
+            if "result" in data:
+                products = data["result"]
+                # Cache symbol to product ID mapping
+                for p in products:
+                    self.product_id_map[p.get("symbol", "")] = p.get("id")
+                return products
+            return []
+        except Exception as e:
+            print(f"Error fetching products: {e}")
+            return []
+    
+    def get_tickers(self) -> Dict[str, Dict]:
+        """Get all tickers with current prices"""
+        try:
+            resp = self.session.get(f"{self.base_url}/v2/tickers", timeout=10)
+            data = resp.json()
+            if "result" in data:
+                return {t["symbol"]: t for t in data["result"]}
+            return {}
+        except Exception as e:
+            print(f"Error fetching tickers: {e}")
+            return {}
+    
+    def get_ticker(self, symbol: str) -> Optional[Dict]:
+        """Get ticker for specific symbol"""
+        try:
+            resp = self.session.get(
+                f"{self.base_url}/v2/tickers/{symbol}",
+                timeout=10
+            )
+            data = resp.json()
+            if "result" in data:
+                return data["result"]
+            return None
+        except Exception as e:
+            print(f"Error fetching ticker {symbol}: {e}")
+            return None
+    
+    def get_candles(
+        self,
+        symbol: str,
+        resolution: int = 60,
+        limit: int = 200
+    ) -> List[Dict]:
+        """
+        Get OHLCV candles
+        
+        Args:
+            symbol: Trading pair symbol
+            resolution: Candle resolution in seconds (60=1m, 300=5m, 900=15m, 3600=1h)
+            limit: Number of candles to fetch
+        """
+        try:
+            end_time = int(time.time())
+            start_time = end_time - (resolution * limit)
+            
+            resp = self.session.get(
+                f"{self.base_url}/v2/history/candles",
+                params={
+                    "symbol": symbol,
+                    "resolution": resolution,
+                    "start": start_time,
+                    "end": end_time
+                },
+                timeout=15
+            )
+            data = resp.json()
+            
+            if "result" in data and data["result"]:
+                candles = []
+                for c in data["result"]:
+                    candles.append({
+                        "time": c.get("time", c.get("t", 0)),
+                        "open": float(c.get("open", c.get("o", 0))),
+                        "high": float(c.get("high", c.get("h", 0))),
+                        "low": float(c.get("low", c.get("l", 0))),
+                        "close": float(c.get("close", c.get("c", 0))),
+                        "volume": float(c.get("volume", c.get("v", 0)))
+                    })
+                # Sort by time
+                candles.sort(key=lambda x: x["time"])
+                return candles
+            return []
+        except Exception as e:
+            print(f"Error fetching candles for {symbol}: {e}")
+            return []
+    
+    def get_orderbook(self, symbol: str, depth: int = 20) -> Dict:
+        """Get order book"""
+        try:
+            product_id = self.product_id_map.get(symbol)
+            if not product_id:
+                # Try to find product ID
+                products = self.get_products()
+                for p in products:
+                    if p.get("symbol") == symbol:
+                        product_id = p.get("id")
+                        break
+            
+            if not product_id:
+                return {"buy": [], "sell": []}
+            
+            resp = self.session.get(
+                f"{self.base_url}/v2/l2orderbook/{product_id}",
+                params={"depth": depth},
+                timeout=10
+            )
+            data = resp.json()
+            
+            if "result" in data:
+                result = data["result"]
+                return {
+                    "buy": result.get("buy", []),
+                    "sell": result.get("sell", [])
+                }
+            return {"buy": [], "sell": []}
+        except Exception as e:
+            print(f"Error fetching orderbook for {symbol}: {e}")
+            return {"buy": [], "sell": []}
+    
+    def get_recent_trades(self, symbol: str) -> List[Dict]:
+        """Get recent trades"""
+        try:
+            product_id = self.product_id_map.get(symbol)
+            if not product_id:
+                return []
+            
+            resp = self.session.get(
+                f"{self.base_url}/v2/trades/{product_id}",
+                timeout=10
+            )
+            data = resp.json()
+            
+            if "result" in data:
+                return data["result"]
+            return []
+        except Exception as e:
+            print(f"Error fetching trades for {symbol}: {e}")
+            return []
+
+
+# ==================== Candlestick Chart ====================
+class RealTimeCandlestickChart:
+    """Professional candlestick chart with real-time updates"""
+    
+    def __init__(self, parent, width: int = 800, height: int = 500):
+        self.parent = parent
         self.width = width
         self.height = height
         
+        self.frame = tk.Frame(parent, bg=Theme.BG_PRIMARY)
+        self.frame.pack(fill=tk.BOTH, expand=True)
+        
         if not HAS_MATPLOTLIB:
-            self._create_placeholder()
+            label = tk.Label(
+                self.frame,
+                text="Matplotlib required for charts",
+                bg=Theme.BG_PRIMARY,
+                fg=Theme.TEXT_PRIMARY,
+                font=("Consolas", 14)
+            )
+            label.pack(expand=True)
             return
-            
+        
         # Create figure with dark theme
-        self.fig = Figure(figsize=(width/100, height/100), dpi=100, facecolor=COLORS['bg_dark'])
+        plt.style.use('dark_background')
+        self.fig = Figure(figsize=(width/100, height/100), dpi=100, facecolor=Theme.BG_PRIMARY)
         
-        # Create subplots: main chart (70%) and volume (30%)
-        self.ax_main = self.fig.add_axes([0.08, 0.35, 0.88, 0.60], facecolor=COLORS['bg_panel'])
-        self.ax_volume = self.fig.add_axes([0.08, 0.08, 0.88, 0.22], facecolor=COLORS['bg_panel'], sharex=self.ax_main)
+        # Main price chart (80% height)
+        self.ax_price = self.fig.add_axes([0.08, 0.25, 0.88, 0.70])
+        # Volume chart (20% height)
+        self.ax_volume = self.fig.add_axes([0.08, 0.05, 0.88, 0.18])
         
-        # Style axes
-        for ax in [self.ax_main, self.ax_volume]:
-            ax.tick_params(colors=COLORS['text_secondary'], labelsize=8)
-            ax.spines['top'].set_color(COLORS['border'])
-            ax.spines['bottom'].set_color(COLORS['border'])
-            ax.spines['left'].set_color(COLORS['border'])
-            ax.spines['right'].set_color(COLORS['border'])
-            ax.grid(True, alpha=0.2, color=COLORS['border'])
-            
-        # Hide x-axis labels on main chart
-        plt.setp(self.ax_main.get_xticklabels(), visible=False)
+        self._setup_axes()
         
-        # Create canvas
-        self.canvas = FigureCanvasTkAgg(self.fig, master=parent_frame)
+        # Embed in Tkinter
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.frame)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
-        # Add toolbar
-        self.toolbar_frame = tk.Frame(parent_frame, bg=COLORS['bg_dark'])
-        self.toolbar_frame.pack(fill=tk.X)
-        self.toolbar = NavigationToolbar2Tk(self.canvas, self.toolbar_frame)
-        self.toolbar.config(background=COLORS['bg_dark'])
-        self.toolbar.update()
-        
         # Data storage
-        self.data = None
-        self.indicators = {}
+        self.candles = []
+        self.symbol = ""
+        self.last_price = 0.0
+    
+    def _setup_axes(self):
+        """Configure chart axes"""
+        for ax in [self.ax_price, self.ax_volume]:
+            ax.set_facecolor(Theme.BG_PRIMARY)
+            ax.tick_params(colors=Theme.TEXT_SECONDARY, labelsize=8)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['bottom'].set_color(Theme.BORDER)
+            ax.spines['left'].set_color(Theme.BORDER)
+            ax.grid(True, alpha=0.2, color=Theme.BORDER, linestyle='--')
         
-    def _create_placeholder(self):
-        """Create placeholder when matplotlib is not available"""
-        label = tk.Label(
-            self.parent,
-            text="📊 Install matplotlib for charts:\npip install matplotlib",
-            bg=COLORS['bg_panel'],
-            fg=COLORS['text_secondary'],
-            font=('Segoe UI', 14)
-        )
-        label.pack(fill=tk.BOTH, expand=True)
-        
-    def update_data(self, timestamps, opens, highs, lows, closes, volumes):
-        """Update chart with new OHLCV data"""
-        if not HAS_MATPLOTLIB:
+        self.ax_volume.set_xlabel('')
+        self.ax_price.set_ylabel('Price', color=Theme.TEXT_SECONDARY, fontsize=9)
+        self.ax_volume.set_ylabel('Vol', color=Theme.TEXT_SECONDARY, fontsize=9)
+    
+    def update(self, candles: List[Dict], symbol: str = ""):
+        """Update chart with new candle data"""
+        if not HAS_MATPLOTLIB or not candles:
             return
-            
-        self.data = {
-            'timestamps': timestamps,
-            'opens': opens,
-            'highs': highs,
-            'lows': lows,
-            'closes': closes,
-            'volumes': volumes
-        }
         
-        self._draw_chart()
+        self.candles = candles
+        self.symbol = symbol
         
-    def _draw_chart(self):
-        """Draw the candlestick chart"""
-        if self.data is None:
-            return
-            
         # Clear axes
-        self.ax_main.clear()
+        self.ax_price.clear()
         self.ax_volume.clear()
+        self._setup_axes()
         
-        # Re-apply styling
-        for ax in [self.ax_main, self.ax_volume]:
-            ax.set_facecolor(COLORS['bg_panel'])
-            ax.tick_params(colors=COLORS['text_secondary'], labelsize=8)
-            ax.grid(True, alpha=0.2, color=COLORS['border'])
-            
-        timestamps = self.data['timestamps']
-        opens = self.data['opens']
-        highs = self.data['highs']
-        lows = self.data['lows']
-        closes = self.data['closes']
-        volumes = self.data['volumes']
+        # Prepare data
+        n = len(candles)
+        x = list(range(n))
         
-        n = len(timestamps)
-        x = np.arange(n)
-        width = 0.6
+        opens = [c["open"] for c in candles]
+        highs = [c["high"] for c in candles]
+        lows = [c["low"] for c in candles]
+        closes = [c["close"] for c in candles]
+        volumes = [c["volume"] for c in candles]
+        
+        if closes:
+            self.last_price = closes[-1]
         
         # Draw candlesticks
         for i in range(n):
-            color = COLORS['candle_up'] if closes[i] >= opens[i] else COLORS['candle_down']
+            color = Theme.CANDLE_UP if closes[i] >= opens[i] else Theme.CANDLE_DOWN
             
             # Wick
-            self.ax_main.plot([x[i], x[i]], [lows[i], highs[i]], color=color, linewidth=1)
+            self.ax_price.plot(
+                [i, i], [lows[i], highs[i]],
+                color=color, linewidth=1
+            )
             
             # Body
             body_bottom = min(opens[i], closes[i])
             body_height = abs(closes[i] - opens[i])
+            if body_height < 0.001:
+                body_height = 0.001
             
             rect = Rectangle(
-                (x[i] - width/2, body_bottom),
-                width, body_height,
+                (i - 0.3, body_bottom),
+                0.6, body_height,
                 facecolor=color,
-                edgecolor=color
+                edgecolor=color,
+                linewidth=1
             )
-            self.ax_main.add_patch(rect)
+            self.ax_price.add_patch(rect)
             
-        # Draw volume bars
-        vol_colors = [COLORS['volume_up'] if closes[i] >= opens[i] else COLORS['volume_down'] 
-                      for i in range(n)]
-        self.ax_volume.bar(x, volumes, width=width, color=vol_colors)
+            # Volume bar
+            vol_color = Theme.VOLUME_UP if closes[i] >= opens[i] else Theme.VOLUME_DOWN
+            self.ax_volume.bar(i, volumes[i], color=vol_color, width=0.6)
         
-        # Draw indicators
-        self._draw_indicators(x)
+        # Add moving averages
+        if n >= 20:
+            ma20 = self._calculate_ma(closes, 20)
+            self.ax_price.plot(
+                range(19, n), ma20[19:],
+                color=Theme.ACCENT, linewidth=1.2, alpha=0.8,
+                label='MA20'
+            )
         
-        # Set labels
-        self.ax_main.set_ylabel('Price', color=COLORS['text_secondary'], fontsize=9)
-        self.ax_volume.set_ylabel('Volume', color=COLORS['text_secondary'], fontsize=9)
-        
-        # Format x-axis with dates
-        if n > 0:
-            # Show subset of labels
-            step = max(1, n // 10)
-            ticks = x[::step]
-            labels = [datetime.fromtimestamp(timestamps[i]).strftime('%m/%d %H:%M') 
-                      for i in range(0, n, step)]
-            self.ax_volume.set_xticks(ticks)
-            self.ax_volume.set_xticklabels(labels, rotation=45, ha='right', fontsize=7)
-            
-        # Set limits
-        self.ax_main.set_xlim(-1, n)
+        if n >= 50:
+            ma50 = self._calculate_ma(closes, 50)
+            self.ax_price.plot(
+                range(49, n), ma50[49:],
+                color=Theme.WARNING, linewidth=1.2, alpha=0.8,
+                label='MA50'
+            )
         
         # Add current price line
+        if closes:
+            self.ax_price.axhline(
+                y=closes[-1],
+                color=Theme.SUCCESS if closes[-1] >= opens[-1] else Theme.DANGER,
+                linestyle='--', linewidth=1, alpha=0.7
+            )
+            
+            # Price label
+            self.ax_price.annotate(
+                f'${closes[-1]:,.2f}',
+                xy=(n - 1, closes[-1]),
+                xytext=(n + 1, closes[-1]),
+                fontsize=9,
+                color=Theme.TEXT_PRIMARY,
+                bbox=dict(
+                    boxstyle='round,pad=0.3',
+                    facecolor=Theme.BG_TERTIARY,
+                    edgecolor=Theme.BORDER
+                )
+            )
+        
+        # Set limits
         if n > 0:
-            current_price = closes[-1]
-            self.ax_main.axhline(y=current_price, color=COLORS['accent_cyan'], 
-                                  linestyle='--', linewidth=1, alpha=0.7)
-            self.ax_main.text(n - 0.5, current_price, f' ${current_price:,.2f}',
-                              color=COLORS['accent_cyan'], fontsize=8, va='center')
+            self.ax_price.set_xlim(-1, n + 5)
+            self.ax_volume.set_xlim(-1, n + 5)
+            
+            price_range = max(highs) - min(lows)
+            self.ax_price.set_ylim(
+                min(lows) - price_range * 0.05,
+                max(highs) + price_range * 0.1
+            )
+        
+        # Title
+        if symbol:
+            change = 0
+            if len(closes) >= 2:
+                change = ((closes[-1] - closes[0]) / closes[0]) * 100
+            
+            title_color = Theme.SUCCESS if change >= 0 else Theme.DANGER
+            self.ax_price.set_title(
+                f'{symbol}  ${closes[-1]:,.2f}  ({change:+.2f}%)',
+                color=title_color, fontsize=12, fontweight='bold',
+                loc='left', pad=10
+            )
+        
+        # Legend
+        self.ax_price.legend(loc='upper left', fontsize=8, framealpha=0.5)
+        
+        # Hide x-axis labels on price chart
+        self.ax_price.set_xticklabels([])
+        
+        # Format volume y-axis
+        self.ax_volume.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K' if x >= 1000 else f'{x:.0f}')
+        )
         
         self.canvas.draw()
-        
-    def _draw_indicators(self, x):
-        """Draw technical indicators on the chart"""
-        if 'ema_fast' in self.indicators:
-            self.ax_main.plot(x, self.indicators['ema_fast'], 
-                             color=COLORS['accent_blue'], linewidth=1, label='EMA 12')
-        if 'ema_slow' in self.indicators:
-            self.ax_main.plot(x, self.indicators['ema_slow'], 
-                             color=COLORS['orange'], linewidth=1, label='EMA 26')
-        if 'bb_upper' in self.indicators:
-            self.ax_main.plot(x, self.indicators['bb_upper'], 
-                             color=COLORS['purple'], linewidth=0.8, linestyle='--', alpha=0.7)
-            self.ax_main.plot(x, self.indicators['bb_lower'], 
-                             color=COLORS['purple'], linewidth=0.8, linestyle='--', alpha=0.7)
-            self.ax_main.fill_between(x, self.indicators['bb_lower'], self.indicators['bb_upper'],
-                                       color=COLORS['purple'], alpha=0.1)
-                                       
-    def add_indicator(self, name: str, values: np.ndarray):
-        """Add a technical indicator to the chart"""
-        self.indicators[name] = values
-        if self.data is not None:
-            self._draw_chart()
-            
-    def clear_indicators(self):
-        """Clear all indicators"""
-        self.indicators = {}
-        if self.data is not None:
-            self._draw_chart()
-
-
-class OrderBookWidget:
-    """Order book visualization widget"""
     
-    def __init__(self, parent_frame):
-        self.frame = tk.Frame(parent_frame, bg=COLORS['bg_panel'])
+    def _calculate_ma(self, data: List[float], period: int) -> List[float]:
+        """Calculate moving average"""
+        ma = []
+        for i in range(len(data)):
+            if i < period - 1:
+                ma.append(data[i])
+            else:
+                ma.append(sum(data[i-period+1:i+1]) / period)
+        return ma
+
+
+# ==================== Order Book Panel ====================
+class OrderBookPanel:
+    """Real-time order book display"""
+    
+    def __init__(self, parent):
+        self.frame = tk.Frame(parent, bg=Theme.BG_SECONDARY)
         self.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Header
-        header = tk.Label(
-            self.frame, text="📖 ORDER BOOK",
-            bg=COLORS['bg_panel'], fg=COLORS['text_primary'],
-            font=('Segoe UI Semibold', 10)
+        # Title
+        title = tk.Label(
+            self.frame,
+            text="📊 ORDER BOOK",
+            bg=Theme.BG_SECONDARY,
+            fg=Theme.ACCENT,
+            font=("Consolas", 11, "bold")
         )
-        header.pack(anchor='w', pady=(0, 5))
+        title.pack(pady=(5, 10))
         
-        # Create treeview for order book
-        columns = ('price', 'size', 'total')
+        # Headers
+        header_frame = tk.Frame(self.frame, bg=Theme.BG_SECONDARY)
+        header_frame.pack(fill=tk.X, padx=5)
         
-        # Asks frame (red - sells)
-        self.asks_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        self.asks_frame.pack(fill=tk.BOTH, expand=True)
+        tk.Label(
+            header_frame, text="Price", bg=Theme.BG_SECONDARY,
+            fg=Theme.TEXT_SECONDARY, font=("Consolas", 9), width=12, anchor='e'
+        ).pack(side=tk.LEFT)
         
-        self.asks_tree = ttk.Treeview(
-            self.asks_frame, columns=columns, show='headings', height=8
-        )
-        for col in columns:
-            self.asks_tree.heading(col, text=col.upper())
-            self.asks_tree.column(col, width=70, anchor='e')
-        self.asks_tree.pack(fill=tk.BOTH, expand=True)
+        tk.Label(
+            header_frame, text="Size", bg=Theme.BG_SECONDARY,
+            fg=Theme.TEXT_SECONDARY, font=("Consolas", 9), width=10, anchor='e'
+        ).pack(side=tk.LEFT, padx=5)
         
-        # Spread display
+        tk.Label(
+            header_frame, text="Total", bg=Theme.BG_SECONDARY,
+            fg=Theme.TEXT_SECONDARY, font=("Consolas", 9), width=12, anchor='e'
+        ).pack(side=tk.LEFT)
+        
+        # Asks (sells) - displayed above
+        self.asks_frame = tk.Frame(self.frame, bg=Theme.BG_SECONDARY)
+        self.asks_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=2)
+        
+        # Spread label
         self.spread_label = tk.Label(
-            self.frame, text="Spread: --",
-            bg=COLORS['bg_card'], fg=COLORS['text_primary'],
-            font=('Consolas', 11, 'bold'), pady=5
+            self.frame,
+            text="Spread: --",
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.TEXT_PRIMARY,
+            font=("Consolas", 10, "bold"),
+            pady=5
         )
-        self.spread_label.pack(fill=tk.X)
+        self.spread_label.pack(fill=tk.X, padx=5, pady=5)
         
-        # Bids frame (green - buys)
-        self.bids_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        self.bids_frame.pack(fill=tk.BOTH, expand=True)
+        # Bids (buys) - displayed below
+        self.bids_frame = tk.Frame(self.frame, bg=Theme.BG_SECONDARY)
+        self.bids_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=2)
         
-        self.bids_tree = ttk.Treeview(
-            self.bids_frame, columns=columns, show='headings', height=8
-        )
-        for col in columns:
-            self.bids_tree.heading(col, text=col.upper())
-            self.bids_tree.column(col, width=70, anchor='e')
-        self.bids_tree.pack(fill=tk.BOTH, expand=True)
-        
-    def update(self, bids: List[tuple], asks: List[tuple]):
-        """Update order book display"""
+        self.ask_labels = []
+        self.bid_labels = []
+        self._create_rows()
+    
+    def _create_rows(self, num_rows: int = 10):
+        """Create order book rows"""
         # Clear existing
-        for item in self.asks_tree.get_children():
-            self.asks_tree.delete(item)
-        for item in self.bids_tree.get_children():
-            self.bids_tree.delete(item)
+        for widget in self.asks_frame.winfo_children():
+            widget.destroy()
+        for widget in self.bids_frame.winfo_children():
+            widget.destroy()
+        
+        self.ask_labels = []
+        self.bid_labels = []
+        
+        # Create ask rows (reversed - highest at top)
+        for i in range(num_rows):
+            row = tk.Frame(self.asks_frame, bg=Theme.BG_SECONDARY)
+            row.pack(fill=tk.X, pady=1)
             
-        # Add asks (reversed so lowest ask is at bottom)
-        cumulative = 0
-        for price, size in reversed(asks[:10]):
-            cumulative += size
-            self.asks_tree.insert('', 'end', values=(
-                f'{price:,.2f}', f'{size:.4f}', f'{cumulative:.4f}'
-            ), tags=('ask',))
+            price_lbl = tk.Label(
+                row, text="--", bg=Theme.BG_SECONDARY,
+                fg=Theme.DANGER, font=("Consolas", 9), width=12, anchor='e'
+            )
+            price_lbl.pack(side=tk.LEFT)
             
-        # Add bids
-        cumulative = 0
-        for price, size in bids[:10]:
-            cumulative += size
-            self.bids_tree.insert('', 'end', values=(
-                f'{price:,.2f}', f'{size:.4f}', f'{cumulative:.4f}'
-            ), tags=('bid',))
+            size_lbl = tk.Label(
+                row, text="--", bg=Theme.BG_SECONDARY,
+                fg=Theme.TEXT_PRIMARY, font=("Consolas", 9), width=10, anchor='e'
+            )
+            size_lbl.pack(side=tk.LEFT, padx=5)
             
+            total_lbl = tk.Label(
+                row, text="--", bg=Theme.BG_SECONDARY,
+                fg=Theme.TEXT_SECONDARY, font=("Consolas", 9), width=12, anchor='e'
+            )
+            total_lbl.pack(side=tk.LEFT)
+            
+            self.ask_labels.append((price_lbl, size_lbl, total_lbl))
+        
+        # Create bid rows
+        for i in range(num_rows):
+            row = tk.Frame(self.bids_frame, bg=Theme.BG_SECONDARY)
+            row.pack(fill=tk.X, pady=1)
+            
+            price_lbl = tk.Label(
+                row, text="--", bg=Theme.BG_SECONDARY,
+                fg=Theme.SUCCESS, font=("Consolas", 9), width=12, anchor='e'
+            )
+            price_lbl.pack(side=tk.LEFT)
+            
+            size_lbl = tk.Label(
+                row, text="--", bg=Theme.BG_SECONDARY,
+                fg=Theme.TEXT_PRIMARY, font=("Consolas", 9), width=10, anchor='e'
+            )
+            size_lbl.pack(side=tk.LEFT, padx=5)
+            
+            total_lbl = tk.Label(
+                row, text="--", bg=Theme.BG_SECONDARY,
+                fg=Theme.TEXT_SECONDARY, font=("Consolas", 9), width=12, anchor='e'
+            )
+            total_lbl.pack(side=tk.LEFT)
+            
+            self.bid_labels.append((price_lbl, size_lbl, total_lbl))
+    
+    def update(self, orderbook: Dict):
+        """Update order book display"""
+        bids = orderbook.get("buy", [])
+        asks = orderbook.get("sell", [])
+        
+        # Sort: bids descending, asks ascending
+        bids = sorted(bids, key=lambda x: float(x.get("price", 0)), reverse=True)[:10]
+        asks = sorted(asks, key=lambda x: float(x.get("price", 0)))[:10]
+        
+        # Update asks (reversed for display)
+        asks_reversed = list(reversed(asks))
+        for i, labels in enumerate(self.ask_labels):
+            if i < len(asks_reversed):
+                order = asks_reversed[i]
+                price = float(order.get("price", 0))
+                size = float(order.get("size", 0))
+                labels[0].config(text=f"${price:,.2f}")
+                labels[1].config(text=f"{size:,.4f}")
+                labels[2].config(text=f"${price * size:,.2f}")
+            else:
+                labels[0].config(text="--")
+                labels[1].config(text="--")
+                labels[2].config(text="--")
+        
+        # Update bids
+        for i, labels in enumerate(self.bid_labels):
+            if i < len(bids):
+                order = bids[i]
+                price = float(order.get("price", 0))
+                size = float(order.get("size", 0))
+                labels[0].config(text=f"${price:,.2f}")
+                labels[1].config(text=f"{size:,.4f}")
+                labels[2].config(text=f"${price * size:,.2f}")
+            else:
+                labels[0].config(text="--")
+                labels[1].config(text="--")
+                labels[2].config(text="--")
+        
         # Update spread
         if bids and asks:
-            spread = asks[0][0] - bids[0][0]
-            spread_pct = spread / asks[0][0] * 100
-            self.spread_label.config(text=f"Spread: ${spread:,.2f} ({spread_pct:.3f}%)")
-            
-        # Color coding
-        self.asks_tree.tag_configure('ask', foreground=COLORS['red'])
-        self.bids_tree.tag_configure('bid', foreground=COLORS['green'])
+            best_bid = float(bids[0].get("price", 0))
+            best_ask = float(asks[0].get("price", 0))
+            spread = best_ask - best_bid
+            spread_pct = (spread / best_ask) * 100 if best_ask > 0 else 0
+            self.spread_label.config(
+                text=f"Spread: ${spread:.2f} ({spread_pct:.3f}%)"
+            )
 
 
-class PositionsPanel:
-    """Panel showing current positions"""
+# ==================== Market Ticker Panel ====================
+class MarketTickerPanel:
+    """Live market ticker display"""
     
-    def __init__(self, parent_frame):
-        self.frame = tk.Frame(parent_frame, bg=COLORS['bg_panel'])
+    def __init__(self, parent):
+        self.frame = tk.Frame(parent, bg=Theme.BG_SECONDARY)
         self.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Header
-        header_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        header_frame.pack(fill=tk.X)
-        
-        tk.Label(
-            header_frame, text="📊 POSITIONS",
-            bg=COLORS['bg_panel'], fg=COLORS['text_primary'],
-            font=('Segoe UI Semibold', 10)
-        ).pack(side=tk.LEFT)
-        
-        # Positions list
-        columns = ('symbol', 'side', 'size', 'entry', 'current', 'pnl', 'pnl_pct')
-        self.tree = ttk.Treeview(
-            self.frame, columns=columns, show='headings', height=5
+        # Title
+        title = tk.Label(
+            self.frame,
+            text="📈 LIVE MARKETS",
+            bg=Theme.BG_SECONDARY,
+            fg=Theme.ACCENT,
+            font=("Consolas", 11, "bold")
         )
+        title.pack(pady=(5, 10))
         
-        headers = ['Symbol', 'Side', 'Size', 'Entry', 'Current', 'P&L', 'P&L %']
-        widths = [70, 50, 60, 80, 80, 80, 60]
+        # Ticker list with scrollbar
+        list_frame = tk.Frame(self.frame, bg=Theme.BG_SECONDARY)
+        list_frame.pack(fill=tk.BOTH, expand=True)
         
-        for col, header, width in zip(columns, headers, widths):
-            self.tree.heading(col, text=header)
-            self.tree.column(col, width=width, anchor='center')
-            
-        self.tree.pack(fill=tk.BOTH, expand=True)
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Summary
-        self.summary_frame = tk.Frame(self.frame, bg=COLORS['bg_card'])
-        self.summary_frame.pack(fill=tk.X, pady=(5, 0))
-        
-        self.total_pnl_label = tk.Label(
-            self.summary_frame, text="Total P&L: $0.00",
-            bg=COLORS['bg_card'], fg=COLORS['text_primary'],
-            font=('Consolas', 11, 'bold')
+        self.ticker_listbox = tk.Listbox(
+            list_frame,
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.TEXT_PRIMARY,
+            font=("Consolas", 9),
+            selectbackground=Theme.ACCENT,
+            selectforeground=Theme.TEXT_PRIMARY,
+            highlightthickness=0,
+            bd=0,
+            yscrollcommand=scrollbar.set,
+            height=15
         )
-        self.total_pnl_label.pack(side=tk.LEFT, padx=10, pady=5)
+        self.ticker_listbox.pack(fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.ticker_listbox.yview)
         
-        self.equity_label = tk.Label(
-            self.summary_frame, text="Equity: $10,000.00",
-            bg=COLORS['bg_card'], fg=COLORS['text_secondary'],
-            font=('Consolas', 10)
-        )
-        self.equity_label.pack(side=tk.RIGHT, padx=10, pady=5)
-        
-    def update_positions(self, positions: List[Dict]):
-        """Update positions display"""
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-            
-        total_pnl = 0
-        
-        for pos in positions:
-            pnl = pos.get('pnl', 0)
-            pnl_pct = pos.get('pnl_pct', 0)
-            total_pnl += pnl
-            
-            tag = 'profit' if pnl >= 0 else 'loss'
-            
-            self.tree.insert('', 'end', values=(
-                pos.get('symbol', ''),
-                pos.get('side', '').upper(),
-                f"{pos.get('size', 0):.4f}",
-                f"${pos.get('entry_price', 0):,.2f}",
-                f"${pos.get('current_price', 0):,.2f}",
-                f"${pnl:+,.2f}",
-                f"{pnl_pct:+.2f}%"
-            ), tags=(tag,))
-            
-        self.tree.tag_configure('profit', foreground=COLORS['green'])
-        self.tree.tag_configure('loss', foreground=COLORS['red'])
-        
-        # Update summary
-        color = COLORS['green'] if total_pnl >= 0 else COLORS['red']
-        self.total_pnl_label.config(text=f"Total P&L: ${total_pnl:+,.2f}", fg=color)
-        
-    def update_equity(self, equity: float):
-        """Update equity display"""
-        self.equity_label.config(text=f"Equity: ${equity:,.2f}")
-
-
-class StrategyPanel:
-    """Strategy control and status panel"""
+        self.tickers = {}
+        self.on_select_callback = None
     
-    def __init__(self, parent_frame, on_strategy_change: Callable = None):
-        self.frame = tk.Frame(parent_frame, bg=COLORS['bg_panel'])
-        self.frame.pack(fill=tk.X, padx=5, pady=5)
-        self.on_strategy_change = on_strategy_change
-        
-        # Header
-        tk.Label(
-            self.frame, text="🎯 STRATEGY CONTROL",
-            bg=COLORS['bg_panel'], fg=COLORS['text_primary'],
-            font=('Segoe UI Semibold', 10)
-        ).pack(anchor='w', pady=(0, 10))
-        
-        # Strategy selection
-        select_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        select_frame.pack(fill=tk.X, pady=5)
-        
-        tk.Label(
-            select_frame, text="Strategy:",
-            bg=COLORS['bg_panel'], fg=COLORS['text_secondary'],
-            font=('Segoe UI', 9)
-        ).pack(side=tk.LEFT)
-        
-        self.strategy_var = tk.StringVar(value='medallion')
-        strategies = ['momentum', 'medallion', 'stat_arb', 'options_alpha', 'ensemble']
-        
-        self.strategy_combo = ttk.Combobox(
-            select_frame, textvariable=self.strategy_var,
-            values=strategies, state='readonly', width=15
-        )
-        self.strategy_combo.pack(side=tk.LEFT, padx=(10, 0))
-        self.strategy_combo.bind('<<ComboboxSelected>>', self._on_strategy_selected)
-        
-        # Symbol selection
-        symbol_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        symbol_frame.pack(fill=tk.X, pady=5)
-        
-        tk.Label(
-            symbol_frame, text="Symbol:",
-            bg=COLORS['bg_panel'], fg=COLORS['text_secondary'],
-            font=('Segoe UI', 9)
-        ).pack(side=tk.LEFT)
-        
-        self.symbol_var = tk.StringVar(value='BTCUSD')
-        symbols = ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BNBUSD', 'XRPUSD']
-        
-        self.symbol_combo = ttk.Combobox(
-            symbol_frame, textvariable=self.symbol_var,
-            values=symbols, state='readonly', width=15
-        )
-        self.symbol_combo.pack(side=tk.LEFT, padx=(10, 0))
-        
-        # Timeframe selection
-        tf_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        tf_frame.pack(fill=tk.X, pady=5)
-        
-        tk.Label(
-            tf_frame, text="Timeframe:",
-            bg=COLORS['bg_panel'], fg=COLORS['text_secondary'],
-            font=('Segoe UI', 9)
-        ).pack(side=tk.LEFT)
-        
-        self.timeframe_var = tk.StringVar(value='1h')
-        timeframes = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
-        
-        self.tf_combo = ttk.Combobox(
-            tf_frame, textvariable=self.timeframe_var,
-            values=timeframes, state='readonly', width=15
-        )
-        self.tf_combo.pack(side=tk.LEFT, padx=(10, 0))
-        
-        # Control buttons
-        btn_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        btn_frame.pack(fill=tk.X, pady=10)
-        
-        self.start_btn = tk.Button(
-            btn_frame, text="▶ START",
-            bg=COLORS['green'], fg='white',
-            font=('Segoe UI Semibold', 9),
-            relief=tk.FLAT, padx=15, pady=5,
-            command=self._on_start
-        )
-        self.start_btn.pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.stop_btn = tk.Button(
-            btn_frame, text="⏹ STOP",
-            bg=COLORS['red'], fg='white',
-            font=('Segoe UI Semibold', 9),
-            relief=tk.FLAT, padx=15, pady=5,
-            command=self._on_stop,
-            state=tk.DISABLED
-        )
-        self.stop_btn.pack(side=tk.LEFT)
-        
-        # Status
-        self.status_label = tk.Label(
-            self.frame, text="● Idle",
-            bg=COLORS['bg_panel'], fg=COLORS['text_secondary'],
-            font=('Segoe UI', 9)
-        )
-        self.status_label.pack(anchor='w', pady=5)
-        
-        # Callbacks
-        self.on_start = None
-        self.on_stop = None
-        
-    def _on_strategy_selected(self, event):
-        if self.on_strategy_change:
-            self.on_strategy_change(self.strategy_var.get())
-            
-    def _on_start(self):
-        if self.on_start:
-            self.on_start()
-        self.start_btn.config(state=tk.DISABLED)
-        self.stop_btn.config(state=tk.NORMAL)
-        self.status_label.config(text="● Running", fg=COLORS['green'])
-        
-    def _on_stop(self):
-        if self.on_stop:
-            self.on_stop()
-        self.start_btn.config(state=tk.NORMAL)
-        self.stop_btn.config(state=tk.DISABLED)
-        self.status_label.config(text="● Stopped", fg=COLORS['red'])
-        
-    def set_status(self, status: str, color: str = None):
-        """Set status text"""
-        self.status_label.config(text=f"● {status}", fg=color or COLORS['text_secondary'])
-
-
-class TradeEntryPanel:
-    """Manual trade entry panel"""
+    def set_on_select(self, callback):
+        """Set callback for ticker selection"""
+        self.on_select_callback = callback
+        self.ticker_listbox.bind('<<ListboxSelect>>', self._on_select)
     
-    def __init__(self, parent_frame):
-        self.frame = tk.Frame(parent_frame, bg=COLORS['bg_panel'])
+    def _on_select(self, event):
+        """Handle ticker selection"""
+        selection = self.ticker_listbox.curselection()
+        if selection and self.on_select_callback:
+            index = selection[0]
+            items = list(self.tickers.keys())
+            if index < len(items):
+                symbol = items[index]
+                self.on_select_callback(symbol)
+    
+    def update(self, tickers: Dict[str, Dict]):
+        """Update ticker display"""
+        self.tickers = tickers
+        self.ticker_listbox.delete(0, tk.END)
+        
+        # Sort by volume
+        sorted_tickers = sorted(
+            tickers.items(),
+            key=lambda x: float(x[1].get("volume", 0)),
+            reverse=True
+        )
+        
+        for symbol, data in sorted_tickers[:30]:
+            price = float(data.get("close", data.get("mark_price", 0)))
+            change = float(data.get("price_change_percent_24h", 0))
+            
+            # Format display
+            if price >= 1000:
+                price_str = f"${price:,.0f}"
+            elif price >= 1:
+                price_str = f"${price:,.2f}"
+            else:
+                price_str = f"${price:.6f}"
+            
+            change_str = f"{change:+.2f}%"
+            
+            # Color indicator
+            indicator = "🟢" if change >= 0 else "🔴"
+            
+            line = f"{indicator} {symbol:<15} {price_str:>12} {change_str:>8}"
+            self.ticker_listbox.insert(tk.END, line)
+
+
+# ==================== Trade Panel ====================
+class TradePanel:
+    """Quick trade panel"""
+    
+    def __init__(self, parent):
+        self.frame = tk.Frame(parent, bg=Theme.BG_SECONDARY)
         self.frame.pack(fill=tk.X, padx=5, pady=5)
         
-        # Header
-        tk.Label(
-            self.frame, text="📝 QUICK TRADE",
-            bg=COLORS['bg_panel'], fg=COLORS['text_primary'],
-            font=('Segoe UI Semibold', 10)
-        ).pack(anchor='w', pady=(0, 10))
+        # Title
+        title = tk.Label(
+            self.frame,
+            text="⚡ QUICK TRADE",
+            bg=Theme.BG_SECONDARY,
+            fg=Theme.ACCENT,
+            font=("Consolas", 11, "bold")
+        )
+        title.pack(pady=(5, 10))
         
-        # Size input
-        size_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        size_frame.pack(fill=tk.X, pady=3)
+        # Symbol display
+        self.symbol_label = tk.Label(
+            self.frame,
+            text="BTCUSD",
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.TEXT_PRIMARY,
+            font=("Consolas", 14, "bold"),
+            pady=10
+        )
+        self.symbol_label.pack(fill=tk.X, padx=10)
+        
+        # Price display
+        self.price_label = tk.Label(
+            self.frame,
+            text="$0.00",
+            bg=Theme.BG_SECONDARY,
+            fg=Theme.SUCCESS,
+            font=("Consolas", 20, "bold")
+        )
+        self.price_label.pack(pady=10)
+        
+        # Amount input
+        input_frame = tk.Frame(self.frame, bg=Theme.BG_SECONDARY)
+        input_frame.pack(fill=tk.X, padx=10, pady=5)
         
         tk.Label(
-            size_frame, text="Size:",
-            bg=COLORS['bg_panel'], fg=COLORS['text_secondary'],
-            font=('Segoe UI', 9), width=8, anchor='w'
+            input_frame, text="Amount:", bg=Theme.BG_SECONDARY,
+            fg=Theme.TEXT_SECONDARY, font=("Consolas", 10)
         ).pack(side=tk.LEFT)
         
-        self.size_var = tk.StringVar(value='0.01')
-        self.size_entry = tk.Entry(
-            size_frame, textvariable=self.size_var,
-            bg=COLORS['bg_input'], fg=COLORS['text_primary'],
-            insertbackground=COLORS['text_primary'],
-            relief=tk.FLAT, width=12
+        self.amount_entry = tk.Entry(
+            input_frame,
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.TEXT_PRIMARY,
+            font=("Consolas", 12),
+            insertbackground=Theme.TEXT_PRIMARY,
+            width=15
         )
-        self.size_entry.pack(side=tk.LEFT, padx=5)
-        
-        # Price input
-        price_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        price_frame.pack(fill=tk.X, pady=3)
-        
-        tk.Label(
-            price_frame, text="Price:",
-            bg=COLORS['bg_panel'], fg=COLORS['text_secondary'],
-            font=('Segoe UI', 9), width=8, anchor='w'
-        ).pack(side=tk.LEFT)
-        
-        self.price_var = tk.StringVar(value='Market')
-        self.price_entry = tk.Entry(
-            price_frame, textvariable=self.price_var,
-            bg=COLORS['bg_input'], fg=COLORS['text_primary'],
-            insertbackground=COLORS['text_primary'],
-            relief=tk.FLAT, width=12
-        )
-        self.price_entry.pack(side=tk.LEFT, padx=5)
-        
-        # Order type
-        type_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        type_frame.pack(fill=tk.X, pady=3)
-        
-        tk.Label(
-            type_frame, text="Type:",
-            bg=COLORS['bg_panel'], fg=COLORS['text_secondary'],
-            font=('Segoe UI', 9), width=8, anchor='w'
-        ).pack(side=tk.LEFT)
-        
-        self.order_type_var = tk.StringVar(value='Market')
-        self.type_combo = ttk.Combobox(
-            type_frame, textvariable=self.order_type_var,
-            values=['Market', 'Limit', 'Stop'], state='readonly', width=10
-        )
-        self.type_combo.pack(side=tk.LEFT, padx=5)
+        self.amount_entry.pack(side=tk.LEFT, padx=5)
+        self.amount_entry.insert(0, "0.01")
         
         # Buy/Sell buttons
-        btn_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        btn_frame.pack(fill=tk.X, pady=10)
+        btn_frame = tk.Frame(self.frame, bg=Theme.BG_SECONDARY)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
         
         self.buy_btn = tk.Button(
-            btn_frame, text="BUY / LONG",
-            bg=COLORS['green'], fg='white',
-            font=('Segoe UI Semibold', 10),
-            relief=tk.FLAT, padx=20, pady=8,
-            command=lambda: self._place_order('buy')
+            btn_frame,
+            text="🟢 BUY / LONG",
+            bg=Theme.SUCCESS,
+            fg="white",
+            font=("Consolas", 11, "bold"),
+            activebackground="#2ea043",
+            cursor="hand2",
+            width=15
         )
-        self.buy_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
+        self.buy_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         
         self.sell_btn = tk.Button(
-            btn_frame, text="SELL / SHORT",
-            bg=COLORS['red'], fg='white',
-            font=('Segoe UI Semibold', 10),
-            relief=tk.FLAT, padx=20, pady=8,
-            command=lambda: self._place_order('sell')
+            btn_frame,
+            text="🔴 SELL / SHORT",
+            bg=Theme.DANGER,
+            fg="white",
+            font=("Consolas", 11, "bold"),
+            activebackground="#da3633",
+            cursor="hand2",
+            width=15
         )
-        self.sell_btn.pack(side=tk.LEFT, expand=True, fill=tk.X)
-        
-        # Callback
-        self.on_place_order = None
-        
-    def _place_order(self, side: str):
-        if self.on_place_order:
-            try:
-                size = float(self.size_var.get())
-                price = None if self.price_var.get().lower() == 'market' else float(self.price_var.get())
-                order_type = self.order_type_var.get().lower()
-                self.on_place_order(side, size, price, order_type)
-            except ValueError:
-                messagebox.showerror("Invalid Input", "Please enter valid numbers for size and price.")
-
-
-class MetricsPanel:
-    """Performance metrics panel"""
+        self.sell_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
     
-    def __init__(self, parent_frame):
-        self.frame = tk.Frame(parent_frame, bg=COLORS['bg_panel'])
-        self.frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Header
-        tk.Label(
-            self.frame, text="📈 PERFORMANCE",
-            bg=COLORS['bg_panel'], fg=COLORS['text_primary'],
-            font=('Segoe UI Semibold', 10)
-        ).pack(anchor='w', pady=(0, 10))
-        
-        # Metrics grid
-        metrics_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        metrics_frame.pack(fill=tk.X)
-        
-        self.metrics = {}
-        metric_names = [
-            ('Total Return', 'return'),
-            ('Win Rate', 'win_rate'),
-            ('Profit Factor', 'profit_factor'),
-            ('Sharpe Ratio', 'sharpe'),
-            ('Max Drawdown', 'max_dd'),
-            ('Trades Today', 'trades_today')
-        ]
-        
-        for i, (label, key) in enumerate(metric_names):
-            row = i // 2
-            col = i % 2
-            
-            cell = tk.Frame(metrics_frame, bg=COLORS['bg_card'], padx=10, pady=5)
-            cell.grid(row=row, column=col, padx=2, pady=2, sticky='ew')
-            
-            tk.Label(
-                cell, text=label,
-                bg=COLORS['bg_card'], fg=COLORS['text_secondary'],
-                font=('Segoe UI', 8)
-            ).pack(anchor='w')
-            
-            value_label = tk.Label(
-                cell, text="--",
-                bg=COLORS['bg_card'], fg=COLORS['text_primary'],
-                font=('Consolas', 11, 'bold')
-            )
-            value_label.pack(anchor='w')
-            
-            self.metrics[key] = value_label
-            
-        metrics_frame.columnconfigure(0, weight=1)
-        metrics_frame.columnconfigure(1, weight=1)
-        
-    def update_metrics(self, metrics: Dict):
-        """Update metrics display"""
-        if 'return' in metrics:
-            val = metrics['return']
-            color = COLORS['green'] if val >= 0 else COLORS['red']
-            self.metrics['return'].config(text=f"{val:+.2f}%", fg=color)
-            
-        if 'win_rate' in metrics:
-            self.metrics['win_rate'].config(text=f"{metrics['win_rate']:.1f}%")
-            
-        if 'profit_factor' in metrics:
-            self.metrics['profit_factor'].config(text=f"{metrics['profit_factor']:.2f}")
-            
-        if 'sharpe' in metrics:
-            self.metrics['sharpe'].config(text=f"{metrics['sharpe']:.2f}")
-            
-        if 'max_dd' in metrics:
-            self.metrics['max_dd'].config(text=f"{metrics['max_dd']:.2f}%", fg=COLORS['red'])
-            
-        if 'trades_today' in metrics:
-            self.metrics['trades_today'].config(text=str(metrics['trades_today']))
-
-
-class LogPanel:
-    """Trading log panel"""
+    def update_symbol(self, symbol: str):
+        """Update symbol display"""
+        self.symbol_label.config(text=symbol)
     
-    def __init__(self, parent_frame):
-        self.frame = tk.Frame(parent_frame, bg=COLORS['bg_panel'])
-        self.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+    def update_price(self, price: float, change: float = 0):
+        """Update price display"""
+        color = Theme.SUCCESS if change >= 0 else Theme.DANGER
+        self.price_label.config(text=f"${price:,.2f}", fg=color)
+
+
+# ==================== Status Bar ====================
+class StatusBar:
+    """Bottom status bar"""
+    
+    def __init__(self, parent):
+        self.frame = tk.Frame(parent, bg=Theme.BG_TERTIARY, height=25)
+        self.frame.pack(fill=tk.X, side=tk.BOTTOM)
+        self.frame.pack_propagate(False)
         
-        # Header
-        header_frame = tk.Frame(self.frame, bg=COLORS['bg_panel'])
-        header_frame.pack(fill=tk.X)
-        
-        tk.Label(
-            header_frame, text="📋 TRADE LOG",
-            bg=COLORS['bg_panel'], fg=COLORS['text_primary'],
-            font=('Segoe UI Semibold', 10)
-        ).pack(side=tk.LEFT)
-        
-        tk.Button(
-            header_frame, text="Clear",
-            bg=COLORS['bg_card'], fg=COLORS['text_secondary'],
-            font=('Segoe UI', 8), relief=tk.FLAT,
-            command=self.clear
-        ).pack(side=tk.RIGHT)
-        
-        # Log text
-        self.log_text = tk.Text(
+        # Connection status
+        self.conn_label = tk.Label(
             self.frame,
-            bg=COLORS['bg_dark'], fg=COLORS['text_secondary'],
-            font=('Consolas', 9),
-            height=8, wrap=tk.WORD,
-            relief=tk.FLAT
+            text="● DISCONNECTED",
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.DANGER,
+            font=("Consolas", 9)
         )
-        self.log_text.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+        self.conn_label.pack(side=tk.LEFT, padx=10)
         
-        # Scrollbar
-        scrollbar = ttk.Scrollbar(self.log_text, command=self.log_text.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.log_text.config(yscrollcommand=scrollbar.set)
+        # Last update
+        self.update_label = tk.Label(
+            self.frame,
+            text="Last update: --",
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.TEXT_SECONDARY,
+            font=("Consolas", 9)
+        )
+        self.update_label.pack(side=tk.LEFT, padx=20)
         
-        # Configure tags for colors
-        self.log_text.tag_configure('info', foreground=COLORS['text_primary'])
-        self.log_text.tag_configure('success', foreground=COLORS['green'])
-        self.log_text.tag_configure('warning', foreground=COLORS['orange'])
-        self.log_text.tag_configure('error', foreground=COLORS['red'])
-        self.log_text.tag_configure('signal', foreground=COLORS['accent_cyan'])
-        
-    def log(self, message: str, level: str = 'info'):
-        """Add a log message"""
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        self.log_text.insert(tk.END, f"[{timestamp}] ", 'info')
-        self.log_text.insert(tk.END, f"{message}\n", level)
-        self.log_text.see(tk.END)
-        
-    def clear(self):
-        """Clear the log"""
-        self.log_text.delete(1.0, tk.END)
-
-
-class TradingGUI:
-    """Main Trading GUI Application"""
+        # API mode
+        self.api_label = tk.Label(
+            self.frame,
+            text="API: Live",
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.ACCENT,
+            font=("Consolas", 9)
+        )
+        self.api_label.pack(side=tk.RIGHT, padx=10)
     
-    def __init__(self):
+    def set_connected(self, connected: bool):
+        """Update connection status"""
+        if connected:
+            self.conn_label.config(text="● CONNECTED", fg=Theme.SUCCESS)
+        else:
+            self.conn_label.config(text="● DISCONNECTED", fg=Theme.DANGER)
+    
+    def set_last_update(self, timestamp: datetime = None):
+        """Update last update time"""
+        if timestamp is None:
+            timestamp = datetime.now()
+        self.update_label.config(
+            text=f"Last update: {timestamp.strftime('%H:%M:%S')}"
+        )
+
+
+# ==================== Main Trading GUI ====================
+class TradingGUI:
+    """
+    Professional Real-Time Trading GUI for Delta Exchange
+    """
+    
+    def __init__(self, testnet: bool = False):
+        self.testnet = testnet
         self.root = tk.Tk()
-        self.root.title("Delta Exchange Algo Trader v4.0 - Renaissance Edition")
+        self.root.title("Delta Exchange Algo Trader - Real-Time Terminal")
         self.root.geometry("1400x900")
-        self.root.configure(bg=COLORS['bg_dark'])
+        self.root.configure(bg=Theme.BG_PRIMARY)
+        self.root.minsize(1200, 700)
         
-        # Set icon (if available)
-        try:
-            self.root.iconbitmap('icon.ico')
-        except:
-            pass
-            
-        # Configure styles
-        self._setup_styles()
+        # Data fetcher
+        self.data_fetcher = RealTimeDataFetcher(testnet=testnet)
         
-        # Create main layout
-        self._create_layout()
+        # Current symbol
+        self.current_symbol = "BTCUSD"
+        self.current_resolution = 60  # 1 minute candles
         
-        # Data queue for thread-safe updates
+        # Update flags
+        self.running = True
         self.update_queue = queue.Queue()
         
-        # Sample data flag
-        self._sample_data_loaded = False
+        # Build UI
+        self._build_ui()
         
-        # Start update loop
-        self._process_updates()
+        # Start data threads
+        self._start_data_threads()
         
-        # Load sample data
-        self.root.after(500, self._load_sample_data)
-        
-    def _setup_styles(self):
-        """Configure ttk styles for dark theme"""
-        style = ttk.Style()
-        
-        # Try to use a theme that supports customization
-        try:
-            style.theme_use('clam')
-        except:
-            pass
-            
-        # Configure Treeview
-        style.configure(
-            "Treeview",
-            background=COLORS['bg_dark'],
-            foreground=COLORS['text_primary'],
-            fieldbackground=COLORS['bg_dark'],
-            borderwidth=0
-        )
-        style.configure(
-            "Treeview.Heading",
-            background=COLORS['bg_card'],
-            foreground=COLORS['text_secondary'],
-            borderwidth=0
-        )
-        style.map('Treeview', background=[('selected', COLORS['accent_blue'])])
-        
-        # Configure Combobox
-        style.configure(
-            "TCombobox",
-            fieldbackground=COLORS['bg_input'],
-            background=COLORS['bg_input'],
-            foreground=COLORS['text_primary']
-        )
-        
-    def _create_layout(self):
-        """Create the main application layout"""
-        # Top bar
-        self._create_top_bar()
+        # Process queue
+        self._process_queue()
+    
+    def _build_ui(self):
+        """Build the main UI"""
+        # Top toolbar
+        self._build_toolbar()
         
         # Main content area
-        main_frame = tk.Frame(self.root, bg=COLORS['bg_dark'])
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        main_frame = tk.Frame(self.root, bg=Theme.BG_PRIMARY)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Left panel (chart)
-        left_panel = tk.Frame(main_frame, bg=COLORS['bg_panel'])
-        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        # Left panel (ticker list)
+        left_panel = tk.Frame(main_frame, bg=Theme.BG_SECONDARY, width=280)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
+        left_panel.pack_propagate(False)
         
-        # Chart header
-        chart_header = tk.Frame(left_panel, bg=COLORS['bg_panel'])
-        chart_header.pack(fill=tk.X, padx=10, pady=10)
+        self.ticker_panel = MarketTickerPanel(left_panel)
+        self.ticker_panel.set_on_select(self._on_symbol_select)
         
-        self.symbol_label = tk.Label(
-            chart_header, text="BTCUSD",
-            bg=COLORS['bg_panel'], fg=COLORS['text_primary'],
-            font=('Segoe UI Semibold', 16)
+        # Center panel (chart)
+        center_panel = tk.Frame(main_frame, bg=Theme.BG_SECONDARY)
+        center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        
+        # Chart controls
+        chart_controls = tk.Frame(center_panel, bg=Theme.BG_SECONDARY)
+        chart_controls.pack(fill=tk.X, pady=5)
+        
+        # Timeframe buttons
+        for tf, res in [("1m", 60), ("5m", 300), ("15m", 900), ("1h", 3600), ("4h", 14400), ("1D", 86400)]:
+            btn = tk.Button(
+                chart_controls,
+                text=tf,
+                bg=Theme.BG_TERTIARY if res != self.current_resolution else Theme.ACCENT,
+                fg=Theme.TEXT_PRIMARY,
+                font=("Consolas", 9),
+                width=4,
+                cursor="hand2",
+                command=lambda r=res: self._change_resolution(r)
+            )
+            btn.pack(side=tk.LEFT, padx=2)
+        
+        # Refresh button
+        refresh_btn = tk.Button(
+            chart_controls,
+            text="🔄 Refresh",
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.ACCENT,
+            font=("Consolas", 9),
+            cursor="hand2",
+            command=self._force_refresh
         )
-        self.symbol_label.pack(side=tk.LEFT)
+        refresh_btn.pack(side=tk.RIGHT, padx=5)
         
-        self.price_label = tk.Label(
-            chart_header, text="$50,000.00",
-            bg=COLORS['bg_panel'], fg=COLORS['green'],
-            font=('Segoe UI Semibold', 16)
-        )
-        self.price_label.pack(side=tk.LEFT, padx=20)
+        # Candlestick chart
+        self.chart = RealTimeCandlestickChart(center_panel, width=800, height=450)
         
-        self.change_label = tk.Label(
-            chart_header, text="+2.5%",
-            bg=COLORS['bg_panel'], fg=COLORS['green'],
-            font=('Segoe UI', 12)
-        )
-        self.change_label.pack(side=tk.LEFT)
-        
-        # Chart
-        chart_frame = tk.Frame(left_panel, bg=COLORS['bg_panel'])
-        chart_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-        
-        self.chart = CandlestickChart(chart_frame, width=900, height=500)
-        
-        # Bottom panel (log)
-        bottom_panel = tk.Frame(left_panel, bg=COLORS['bg_panel'], height=150)
-        bottom_panel.pack(fill=tk.X, padx=10, pady=(0, 10))
-        bottom_panel.pack_propagate(False)
-        
-        self.log_panel = LogPanel(bottom_panel)
-        
-        # Right panel
-        right_panel = tk.Frame(main_frame, bg=COLORS['bg_dark'], width=350)
+        # Right panel (order book + trade)
+        right_panel = tk.Frame(main_frame, bg=Theme.BG_SECONDARY, width=320)
         right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         right_panel.pack_propagate(False)
         
-        # Strategy control
-        strategy_frame = tk.Frame(right_panel, bg=COLORS['bg_panel'])
-        strategy_frame.pack(fill=tk.X, pady=(0, 5))
-        self.strategy_panel = StrategyPanel(strategy_frame, self._on_strategy_change)
-        self.strategy_panel.on_start = self._on_start_trading
-        self.strategy_panel.on_stop = self._on_stop_trading
+        # Trade panel
+        self.trade_panel = TradePanel(right_panel)
         
-        # Trade entry
-        trade_frame = tk.Frame(right_panel, bg=COLORS['bg_panel'])
-        trade_frame.pack(fill=tk.X, pady=5)
-        self.trade_panel = TradeEntryPanel(trade_frame)
-        self.trade_panel.on_place_order = self._on_place_order
+        # Separator
+        ttk.Separator(right_panel, orient='horizontal').pack(fill=tk.X, pady=10)
         
-        # Metrics
-        metrics_frame = tk.Frame(right_panel, bg=COLORS['bg_panel'])
-        metrics_frame.pack(fill=tk.X, pady=5)
-        self.metrics_panel = MetricsPanel(metrics_frame)
+        # Order book
+        self.orderbook_panel = OrderBookPanel(right_panel)
         
-        # Positions
-        positions_frame = tk.Frame(right_panel, bg=COLORS['bg_panel'])
-        positions_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-        self.positions_panel = PositionsPanel(positions_frame)
-        
-        # Order book (at bottom of right panel)
-        orderbook_frame = tk.Frame(right_panel, bg=COLORS['bg_panel'])
-        orderbook_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-        self.orderbook = OrderBookWidget(orderbook_frame)
-        
-    def _create_top_bar(self):
-        """Create the top navigation bar"""
-        top_bar = tk.Frame(self.root, bg=COLORS['bg_panel'], height=50)
-        top_bar.pack(fill=tk.X, padx=10, pady=10)
-        top_bar.pack_propagate(False)
+        # Status bar
+        self.status_bar = StatusBar(self.root)
+    
+    def _build_toolbar(self):
+        """Build top toolbar"""
+        toolbar = tk.Frame(self.root, bg=Theme.BG_TERTIARY, height=40)
+        toolbar.pack(fill=tk.X)
+        toolbar.pack_propagate(False)
         
         # Logo
-        logo_label = tk.Label(
-            top_bar, text="🤖 DELTA ALGO TRADER",
-            bg=COLORS['bg_panel'], fg=COLORS['text_primary'],
-            font=('Segoe UI Semibold', 14)
+        logo = tk.Label(
+            toolbar,
+            text="🚀 DELTA EXCHANGE ALGO TRADER",
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.ACCENT,
+            font=("Consolas", 12, "bold")
         )
-        logo_label.pack(side=tk.LEFT, padx=10)
+        logo.pack(side=tk.LEFT, padx=15)
         
-        # Version
-        version_label = tk.Label(
-            top_bar, text="v4.0 Renaissance Edition",
-            bg=COLORS['bg_panel'], fg=COLORS['accent_cyan'],
-            font=('Segoe UI', 9)
+        # Symbol search
+        search_frame = tk.Frame(toolbar, bg=Theme.BG_TERTIARY)
+        search_frame.pack(side=tk.LEFT, padx=20)
+        
+        tk.Label(
+            search_frame, text="Symbol:", bg=Theme.BG_TERTIARY,
+            fg=Theme.TEXT_SECONDARY, font=("Consolas", 10)
+        ).pack(side=tk.LEFT)
+        
+        self.symbol_entry = tk.Entry(
+            search_frame,
+            bg=Theme.BG_SECONDARY,
+            fg=Theme.TEXT_PRIMARY,
+            font=("Consolas", 11),
+            insertbackground=Theme.TEXT_PRIMARY,
+            width=15
         )
-        version_label.pack(side=tk.LEFT)
+        self.symbol_entry.pack(side=tk.LEFT, padx=5)
+        self.symbol_entry.insert(0, self.current_symbol)
+        self.symbol_entry.bind('<Return>', lambda e: self._search_symbol())
         
-        # Right side - account info
-        account_frame = tk.Frame(top_bar, bg=COLORS['bg_panel'])
-        account_frame.pack(side=tk.RIGHT, padx=10)
-        
-        self.account_label = tk.Label(
-            account_frame, text="TESTNET",
-            bg=COLORS['orange'], fg='white',
-            font=('Segoe UI Semibold', 9),
-            padx=10, pady=2
+        search_btn = tk.Button(
+            search_frame,
+            text="Go",
+            bg=Theme.ACCENT,
+            fg="white",
+            font=("Consolas", 10),
+            cursor="hand2",
+            command=self._search_symbol
         )
-        self.account_label.pack(side=tk.LEFT, padx=5)
+        search_btn.pack(side=tk.LEFT, padx=5)
         
-        self.connection_label = tk.Label(
-            account_frame, text="● Connected",
-            bg=COLORS['bg_panel'], fg=COLORS['green'],
-            font=('Segoe UI', 9)
+        # API Mode indicator
+        mode_label = tk.Label(
+            toolbar,
+            text="🟢 LIVE" if not self.testnet else "🟡 TESTNET",
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.SUCCESS if not self.testnet else Theme.WARNING,
+            font=("Consolas", 10, "bold")
         )
-        self.connection_label.pack(side=tk.LEFT, padx=10)
+        mode_label.pack(side=tk.RIGHT, padx=15)
         
         # Time
         self.time_label = tk.Label(
-            account_frame, text="",
-            bg=COLORS['bg_panel'], fg=COLORS['text_secondary'],
-            font=('Consolas', 10)
+            toolbar,
+            text="",
+            bg=Theme.BG_TERTIARY,
+            fg=Theme.TEXT_PRIMARY,
+            font=("Consolas", 10)
         )
-        self.time_label.pack(side=tk.LEFT, padx=10)
+        self.time_label.pack(side=tk.RIGHT, padx=15)
         self._update_time()
-        
+    
     def _update_time(self):
-        """Update the time display"""
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.time_label.config(text=current_time)
+        """Update time display"""
+        now = datetime.now()
+        self.time_label.config(text=now.strftime("%Y-%m-%d %H:%M:%S"))
         self.root.after(1000, self._update_time)
+    
+    def _start_data_threads(self):
+        """Start background data fetching threads"""
+        # Ticker update thread
+        def ticker_thread():
+            while self.running:
+                try:
+                    tickers = self.data_fetcher.get_tickers()
+                    if tickers:
+                        self.update_queue.put(("tickers", tickers))
+                        self.update_queue.put(("connected", True))
+                except Exception as e:
+                    self.update_queue.put(("connected", False))
+                time.sleep(5)  # Update every 5 seconds
         
-    def _load_sample_data(self):
-        """Load sample chart data for demonstration"""
-        if self._sample_data_loaded:
-            return
-            
-        self.log_panel.log("Loading market data...", "info")
+        # Candle update thread
+        def candle_thread():
+            while self.running:
+                try:
+                    candles = self.data_fetcher.get_candles(
+                        self.current_symbol,
+                        self.current_resolution,
+                        limit=150
+                    )
+                    if candles:
+                        self.update_queue.put(("candles", candles))
+                except Exception as e:
+                    print(f"Candle fetch error: {e}")
+                time.sleep(3)  # Update every 3 seconds
         
-        # Generate sample OHLCV data
-        np.random.seed(42)
-        n = 100
+        # Order book update thread
+        def orderbook_thread():
+            while self.running:
+                try:
+                    orderbook = self.data_fetcher.get_orderbook(
+                        self.current_symbol,
+                        depth=15
+                    )
+                    if orderbook:
+                        self.update_queue.put(("orderbook", orderbook))
+                except Exception as e:
+                    print(f"Orderbook fetch error: {e}")
+                time.sleep(2)  # Update every 2 seconds
         
-        base_time = datetime.now() - timedelta(hours=n)
-        timestamps = np.array([
-            (base_time + timedelta(hours=i)).timestamp()
-            for i in range(n)
-        ])
-        
-        # Generate realistic price movement
-        base_price = 50000
-        returns = np.random.randn(n) * 0.005
-        prices = base_price * np.cumprod(1 + returns)
-        
-        opens = prices
-        highs = prices * (1 + np.abs(np.random.randn(n) * 0.003))
-        lows = prices * (1 - np.abs(np.random.randn(n) * 0.003))
-        closes = prices + np.random.randn(n) * prices * 0.001
-        volumes = np.random.uniform(100, 500, n)
-        
-        # Update chart
-        self.chart.update_data(timestamps, opens, highs, lows, closes, volumes)
-        
-        # Add indicators
-        from signals import ema, bollinger_bands
-        
-        ema_fast = ema(closes, 12)
-        ema_slow = ema(closes, 26)
-        bb_upper, bb_mid, bb_lower = bollinger_bands(closes, 20, 2)
-        
-        self.chart.indicators['ema_fast'] = ema_fast
-        self.chart.indicators['ema_slow'] = ema_slow
-        self.chart.indicators['bb_upper'] = bb_upper
-        self.chart.indicators['bb_lower'] = bb_lower
-        self.chart._draw_chart()
-        
-        # Update price display
-        current_price = closes[-1]
-        prev_price = closes[-2] if len(closes) > 1 else current_price
-        change_pct = (current_price - prev_price) / prev_price * 100
-        
-        self.price_label.config(text=f"${current_price:,.2f}")
-        
-        color = COLORS['green'] if change_pct >= 0 else COLORS['red']
-        self.price_label.config(fg=color)
-        self.change_label.config(text=f"{change_pct:+.2f}%", fg=color)
-        
-        # Update sample order book
-        mid_price = current_price
-        bids = [(mid_price - i * 10 - np.random.uniform(0, 5), np.random.uniform(0.1, 2)) 
-                for i in range(15)]
-        asks = [(mid_price + i * 10 + np.random.uniform(0, 5), np.random.uniform(0.1, 2)) 
-                for i in range(15)]
-        self.orderbook.update(bids, asks)
-        
-        # Update sample metrics
-        self.metrics_panel.update_metrics({
-            'return': 12.5,
-            'win_rate': 58.3,
-            'profit_factor': 1.85,
-            'sharpe': 1.42,
-            'max_dd': 8.2,
-            'trades_today': 15
-        })
-        
-        # Update sample positions
-        self.positions_panel.update_positions([
-            {
-                'symbol': 'BTCUSD',
-                'side': 'long',
-                'size': 0.5,
-                'entry_price': 49500,
-                'current_price': current_price,
-                'pnl': (current_price - 49500) * 0.5,
-                'pnl_pct': (current_price - 49500) / 49500 * 100
-            }
-        ])
-        self.positions_panel.update_equity(10500.00)
-        
-        self.log_panel.log("Market data loaded successfully", "success")
-        self.log_panel.log(f"Current price: ${current_price:,.2f}", "info")
-        
-        self._sample_data_loaded = True
-        
-    def _on_strategy_change(self, strategy: str):
-        """Handle strategy selection change"""
-        self.log_panel.log(f"Strategy changed to: {strategy}", "info")
-        
-    def _on_start_trading(self):
-        """Handle start trading button"""
-        strategy = self.strategy_panel.strategy_var.get()
-        symbol = self.strategy_panel.symbol_var.get()
-        timeframe = self.strategy_panel.timeframe_var.get()
-        
-        self.log_panel.log(f"Starting {strategy} strategy on {symbol} ({timeframe})", "success")
-        self.log_panel.log("Connecting to Delta Exchange...", "info")
-        self.log_panel.log("Strategy initialized and running", "success")
-        
-    def _on_stop_trading(self):
-        """Handle stop trading button"""
-        self.log_panel.log("Stopping strategy...", "warning")
-        self.log_panel.log("Strategy stopped", "info")
-        
-    def _on_place_order(self, side: str, size: float, price: float, order_type: str):
-        """Handle manual order placement"""
-        price_str = f"${price:,.2f}" if price else "Market"
-        self.log_panel.log(
-            f"Order placed: {side.upper()} {size} @ {price_str} ({order_type})",
-            "signal"
-        )
-        
-    def _process_updates(self):
-        """Process updates from the queue"""
+        # Start threads
+        threading.Thread(target=ticker_thread, daemon=True).start()
+        threading.Thread(target=candle_thread, daemon=True).start()
+        threading.Thread(target=orderbook_thread, daemon=True).start()
+    
+    def _process_queue(self):
+        """Process update queue in main thread"""
         try:
             while True:
-                update = self.update_queue.get_nowait()
-                # Process update based on type
-                if update['type'] == 'price':
-                    self._update_price(update['data'])
-                elif update['type'] == 'orderbook':
-                    self.orderbook.update(update['data']['bids'], update['data']['asks'])
-                elif update['type'] == 'position':
-                    self.positions_panel.update_positions(update['data'])
-                elif update['type'] == 'log':
-                    self.log_panel.log(update['data']['message'], update['data'].get('level', 'info'))
+                update_type, data = self.update_queue.get_nowait()
+                
+                if update_type == "tickers":
+                    self.ticker_panel.update(data)
+                    # Update trade panel price
+                    if self.current_symbol in data:
+                        ticker = data[self.current_symbol]
+                        price = float(ticker.get("close", ticker.get("mark_price", 0)))
+                        change = float(ticker.get("price_change_percent_24h", 0))
+                        self.trade_panel.update_price(price, change)
+                
+                elif update_type == "candles":
+                    self.chart.update(data, self.current_symbol)
+                    self.status_bar.set_last_update()
+                
+                elif update_type == "orderbook":
+                    self.orderbook_panel.update(data)
+                
+                elif update_type == "connected":
+                    self.status_bar.set_connected(data)
+                
         except queue.Empty:
             pass
-            
+        
         # Schedule next check
-        self.root.after(100, self._process_updates)
+        self.root.after(100, self._process_queue)
+    
+    def _on_symbol_select(self, symbol: str):
+        """Handle symbol selection from ticker panel"""
+        self.current_symbol = symbol
+        self.symbol_entry.delete(0, tk.END)
+        self.symbol_entry.insert(0, symbol)
+        self.trade_panel.update_symbol(symbol)
+        self._force_refresh()
+    
+    def _search_symbol(self):
+        """Search for symbol"""
+        symbol = self.symbol_entry.get().upper().strip()
+        if symbol:
+            self.current_symbol = symbol
+            self.trade_panel.update_symbol(symbol)
+            self._force_refresh()
+    
+    def _change_resolution(self, resolution: int):
+        """Change chart resolution"""
+        self.current_resolution = resolution
+        self._force_refresh()
+    
+    def _force_refresh(self):
+        """Force immediate data refresh"""
+        def refresh():
+            try:
+                candles = self.data_fetcher.get_candles(
+                    self.current_symbol,
+                    self.current_resolution,
+                    limit=150
+                )
+                if candles:
+                    self.update_queue.put(("candles", candles))
+                
+                orderbook = self.data_fetcher.get_orderbook(
+                    self.current_symbol,
+                    depth=15
+                )
+                if orderbook:
+                    self.update_queue.put(("orderbook", orderbook))
+                
+            except Exception as e:
+                print(f"Refresh error: {e}")
         
-    def _update_price(self, data: Dict):
-        """Update price display"""
-        price = data['price']
-        change = data.get('change', 0)
-        
-        self.price_label.config(text=f"${price:,.2f}")
-        
-        color = COLORS['green'] if change >= 0 else COLORS['red']
-        self.price_label.config(fg=color)
-        self.change_label.config(text=f"{change:+.2f}%", fg=color)
-        
+        threading.Thread(target=refresh, daemon=True).start()
+    
     def run(self):
-        """Start the GUI application"""
-        self.root.mainloop()
+        """Run the GUI"""
+        try:
+            # Initialize products
+            self.data_fetcher.get_products()
+            self.root.mainloop()
+        finally:
+            self.running = False
+    
+    def quit(self):
+        """Quit the application"""
+        self.running = False
+        self.root.quit()
 
 
-def launch_gui():
-    """Launch the trading GUI"""
-    app = TradingGUI()
+def run_app(testnet: bool = False):
+    """Run the trading application"""
+    app = TradingGUI(testnet=testnet)
     app.run()
 
 
-if __name__ == '__main__':
-    launch_gui()
+if __name__ == "__main__":
+    run_app()
