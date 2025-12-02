@@ -78,6 +78,7 @@ secrets/
 *.pem
 *.key
 credentials.json
+config/credentials.py
 
 # Kill switch file
 KILL_SWITCH

@@ -1,0 +1,226 @@
+name: Aladdin Trading Bot CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  DOCKER_IMAGE: aladdin-trading-bot
+
+jobs:
+  # ============================================
+  # Linting & Code Quality
+  # ============================================
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install linting tools
+        run: |
+          pip install ruff black isort mypy
+
+      - name: Run Ruff (linting)
+        run: ruff check . --output-format=github
+        continue-on-error: true
+
+      - name: Run Black (formatting check)
+        run: black --check --diff .
+        continue-on-error: true
+
+      - name: Run isort (import sorting)
+        run: isort --check-only --diff .
+        continue-on-error: true
+
+  # ============================================
+  # Unit Tests
+  # ============================================
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-asyncio
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing
+        env:
+          DELTA_API_KEY: ${{ secrets.DELTA_API_KEY_TEST }}
+          DELTA_API_SECRET: ${{ secrets.DELTA_API_SECRET_TEST }}
+          DELTA_TESTNET: 'true'
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ============================================
+  # Integration Tests
+  # ============================================
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run integration tests
+        run: |
+          pytest tests/integration/ -v --timeout=60
+        env:
+          DELTA_API_KEY: ${{ secrets.DELTA_API_KEY_TEST }}
+          DELTA_API_SECRET: ${{ secrets.DELTA_API_SECRET_TEST }}
+          DELTA_TESTNET: 'true'
+        continue-on-error: true
+
+  # ============================================
+  # Build Docker Image
+  # ============================================
+  build:
+    name: Build Docker
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and export
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+          outputs: type=docker,dest=/tmp/image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: docker-image
+          path: /tmp/image.tar
+          retention-days: 1
+
+  # ============================================
+  # Security Scan
+  # ============================================
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load --input /tmp/image.tar
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.DOCKER_IMAGE }}:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ============================================
+  # Deploy to Registry
+  # ============================================
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: [build, security]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================
+  # Notify on Failure
+  # ============================================
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [test, build]
+    if: failure()
+    steps:
+      - name: Send Slack notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: 'Aladdin CI/CD Pipeline Failed'
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+        if: env.SLACK_WEBHOOK != ''

@@ -1,0 +1,197 @@
+"""
+ALADDIN TRADING PLATFORM - Configuration
+==========================================
+Central configuration for the entire trading system.
+Copy to config.yml and customize.
+"""
+
+# =============================================================================
+# TRADING CONFIGURATION
+# =============================================================================
+trading:
+  # Trading mode: "paper" or "live"
+  mode: "paper"
+  
+  # Symbols to trade (auto-discovered if empty)
+  symbols:
+    - "BTCUSD"
+    - "ETHUSD"
+  
+  # Include options trading
+  trade_options: true
+  
+  # Analysis interval in seconds
+  analysis_interval: 60
+  
+  # Minimum signal confidence to trade (0-1)
+  min_confidence: 0.65
+  
+  # Maximum concurrent positions
+  max_positions: 5
+
+# =============================================================================
+# RISK MANAGEMENT
+# =============================================================================
+risk:
+  # Maximum daily loss as % of portfolio
+  max_daily_loss_pct: 5.0
+  
+  # Maximum drawdown before kill switch
+  max_drawdown_pct: 15.0
+  
+  # Risk per trade as % of portfolio
+  risk_per_trade_pct: 2.0
+  
+  # Maximum leverage allowed
+  max_leverage: 10
+  
+  # Stop loss ATR multiplier
+  stop_loss_atr: 2.0
+  
+  # Take profit ATR multiplier
+  take_profit_atr: 3.0
+  
+  # Minimum risk/reward ratio
+  min_risk_reward: 1.5
+  
+  # Emergency kill switch enabled
+  kill_switch_enabled: true
+
+# =============================================================================
+# SIGNAL WEIGHTS (must sum to 1.0)
+# =============================================================================
+signals:
+  # Technical analysis weight
+  technical_weight: 0.40
+  
+  # Sentiment analysis weight
+  sentiment_weight: 0.30
+  
+  # Orderbook imbalance weight
+  orderbook_weight: 0.15
+  
+  # Volume analysis weight
+  volume_weight: 0.15
+  
+  # Confidence decay window (seconds)
+  confidence_decay_window: 300
+  
+  # Minimum signal strength (1-5)
+  min_signal_strength: 3
+
+# =============================================================================
+# DATA SOURCES
+# =============================================================================
+data_sources:
+  # News API (get key from newsapi.org)
+  newsapi:
+    enabled: true
+    refresh_interval: 300
+  
+  # RSS feeds
+  rss:
+    enabled: true
+    feeds:
+      - "https://cointelegraph.com/rss"
+      - "https://cryptonews.com/news/feed/"
+  
+  # Twitter/X (requires API keys)
+  twitter:
+    enabled: false
+  
+  # Reddit
+  reddit:
+    enabled: true
+    subreddits:
+      - "cryptocurrency"
+      - "bitcoin"
+      - "ethtrader"
+  
+  # CryptoCompare
+  cryptocompare:
+    enabled: true
+
+# =============================================================================
+# OPTIONS TRADING
+# =============================================================================
+options:
+  # Minimum days to expiry
+  min_dte: 1
+  
+  # Maximum days to expiry
+  max_dte: 30
+  
+  # Target delta for strike selection
+  target_delta: 0.30
+  
+  # Maximum premium as % of portfolio
+  max_premium_pct: 5.0
+  
+  # Minimum liquidity (open interest)
+  min_open_interest: 10
+  
+  # Enable spread strategies
+  enable_spreads: true
+
+# =============================================================================
+# EXECUTION
+# =============================================================================
+execution:
+  # Order type: "market" or "limit"
+  default_order_type: "limit"
+  
+  # Limit order offset from mid (%)
+  limit_offset_pct: 0.1
+  
+  # Maximum slippage allowed (%)
+  max_slippage_pct: 0.5
+  
+  # Order retry attempts
+  max_retries: 3
+  
+  # Retry delay (seconds)
+  retry_delay: 1
+  
+  # Enable smart order routing
+  smart_routing: true
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+monitoring:
+  # Prometheus metrics port
+  prometheus_port: 9090
+  
+  # Health check port
+  health_port: 8080
+  
+  # Enable Slack alerts
+  slack_enabled: false
+  
+  # Enable Telegram alerts
+  telegram_enabled: false
+  
+  # Alert on daily loss > this %
+  alert_loss_threshold: 3.0
+  
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  log_level: "INFO"
+
+# =============================================================================
+# BACKTESTING
+# =============================================================================
+backtest:
+  # Start date for backtest
+  start_date: "2024-01-01"
+  
+  # End date for backtest
+  end_date: "2024-12-01"
+  
+  # Initial capital
+  initial_capital: 10000
+  
+  # Commission per trade (%)
+  commission_pct: 0.05
+  
+  # Slippage simulation (%)
+  slippage_pct: 0.1
