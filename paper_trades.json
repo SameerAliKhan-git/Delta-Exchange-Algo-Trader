@@ -1,0 +1,41 @@
+{
+  "starting_capital": 20.0,
+  "current_balance": 20.0,
+  "net_pnl": 0,
+  "trades": [
+    {
+      "type": "OPEN",
+      "symbol": "SOLUSD",
+      "side": "LONG",
+      "entry_price": 139.21279153,
+      "contracts": 21,
+      "value": 292.346862213,
+      "confidence": 75,
+      "strategy": "Mean Reversion",
+      "reasons": [
+        "\ud83d\udcc9 Price at lower BB $139.21",
+        "\ud83d\ude30 RSI oversold: 13",
+        "\ud83d\udd25 EXTREME oversold!",
+        "\ud83d\ude30 Market fear (contrarian buy)"
+      ],
+      "timestamp": "2025-12-03T01:48:23.636275"
+    },
+    {
+      "type": "OPEN",
+      "symbol": "XRPUSD",
+      "side": "LONG",
+      "entry_price": 2.16239136,
+      "contracts": 13,
+      "value": 281.1108768,
+      "confidence": 78,
+      "strategy": "Mean Reversion",
+      "reasons": [
+        "\ud83d\udcc9 Price at lower BB $2.16",
+        "\ud83d\ude30 RSI oversold: 17",
+        "\ud83d\udd25 EXTREME oversold!",
+        "\ud83d\ude30 Market fear (contrarian buy)"
+      ],
+      "timestamp": "2025-12-03T01:48:53.580498"
+    }
+  ]
+}
