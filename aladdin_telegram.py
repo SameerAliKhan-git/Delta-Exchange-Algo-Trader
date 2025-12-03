@@ -9,37 +9,22 @@
 ║    ██║  ██║███████╗██║  ██║██████╔╝██████╔╝██║██║ ╚████║                      ║
 ║    ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝ ╚═════╝ ╚═╝╚═╝  ╚═══╝                      ║
 ║                                                                               ║
-║              💎💎💎 WEALTH BUILDER EDITION 💎💎💎                             ║
+║        💎💎💎 WEALTH BUILDER + TELEGRAM CONTROL 💎💎💎                        ║
 ║                                                                               ║
 ║   ════════════════════════════════════════════════════════════════════════    ║
 ║                                                                               ║
-║   🎯 GOALS:                                                                   ║
-║      • 100%+ Returns Target                                                   ║
-║      • 70-80% Win Rate                                                        ║
-║      • Ultra-Low Drawdown (<5%)                                               ║
-║      • Maximum Lot Size for Maximum Profits                                   ║
+║   📱 TELEGRAM COMMANDS:                                                       ║
+║      /start - Start trading                                                   ║
+║      /stop - Stop trading                                                     ║
+║      /status - Check balance & positions                                      ║
+║      /trades - View trade history                                             ║
+║      /settings - View current settings                                        ║
+║      /kill - Shutdown bot completely                                          ║
 ║                                                                               ║
-║   🧠 INTELLIGENCE:                                                            ║
-║      • Fear & Greed Index Analysis                                            ║
-║      • News Sentiment Scoring                                                 ║
-║      • Order Book Pressure Detection                                          ║
-║      • Smart Money Flow Tracking                                              ║
-║      • Multi-Timeframe Trend Analysis                                         ║
-║      • Volatility-Based Dynamic Targets                                       ║
-║                                                                               ║
-║   💎 5 WINNING STRATEGIES:                                                    ║
-║      1. 📈 Trend Following + Momentum (65% WR)                                ║
-║      2. 🔄 Mean Reversion Extreme (70% WR)                                    ║
-║      3. 📰 Sentiment Divergence (75% WR)                                      ║
-║      4. 🐋 Smart Money Detection (72% WR)                                     ║
-║      5. 🚀 Breakout Momentum (60% WR)                                         ║
-║                                                                               ║
-║   🛡️ RISK MANAGEMENT:                                                        ║
-║      • Dynamic Stop Loss (ATR-based)                                          ║
-║      • Trailing Profit Lock                                                   ║
-║      • Breakeven Protection                                                   ║
-║      • Max 3% Risk Per Trade                                                  ║
-║      • Daily Loss Limit                                                       ║
+║   🔔 AUTO NOTIFICATIONS:                                                      ║
+║      • Trade opened alerts                                                    ║
+║      • Trade closed alerts with P&L                                           ║
+║      • Daily summary reports                                                  ║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 """
@@ -55,10 +40,19 @@ from datetime import datetime
 from collections import deque
 from statistics import mean, stdev
 import sys
+import os
 
 # Fast output
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(line_buffering=True)
+
+# =============================================================================
+# TELEGRAM CONFIGURATION
+# =============================================================================
+
+TELEGRAM_TOKEN = "8231064948:AAHh2bLGNriAv_z6YI4U1gt8T2xONX8LV-Y"
+TELEGRAM_CHAT_ID = None  # Will be set when user sends first message
+TELEGRAM_ENABLED = True
 
 # =============================================================================
 # API CONFIGURATION - SAMMY SUB-ACCOUNT
@@ -74,35 +68,32 @@ WS_URL = "wss://socket.india.delta.exchange"
 # =============================================================================
 
 ASSETS = {
-    'XRPUSD': {'product_id': 185, 'contract_size': 10, 'leverage': 50, 'tick': 0.0001, 'min_margin': 0.05},    # Cheapest ~$0.05/lot
-    'SOLUSD': {'product_id': 146, 'contract_size': 0.1, 'leverage': 50, 'tick': 0.01, 'min_margin': 0.50},     # ~$0.50/lot
-    'ETHUSD': {'product_id': 27, 'contract_size': 0.01, 'leverage': 100, 'tick': 0.05, 'min_margin': 0.40},    # ~$0.40/lot
-    'BTCUSD': {'product_id': 84, 'contract_size': 0.001, 'leverage': 100, 'tick': 0.5, 'min_margin': 1.00},    # ~$1.00/lot
+    'XRPUSD': {'product_id': 185, 'contract_size': 10, 'leverage': 50, 'tick': 0.0001, 'min_margin': 0.05},
+    'SOLUSD': {'product_id': 146, 'contract_size': 0.1, 'leverage': 50, 'tick': 0.01, 'min_margin': 0.50},
+    'ETHUSD': {'product_id': 27, 'contract_size': 0.01, 'leverage': 100, 'tick': 0.05, 'min_margin': 0.40},
+    'BTCUSD': {'product_id': 84, 'contract_size': 0.001, 'leverage': 100, 'tick': 0.5, 'min_margin': 1.00},
 }
 
 # =============================================================================
-# STRATEGY CONFIGURATION - OPTIMIZED FOR HIGH WIN RATE
+# STRATEGY CONFIGURATION
 # =============================================================================
 
-# Fees
-MAKER_FEE = 0.0002  # 0.02%
-TAKER_FEE = 0.0005  # 0.05%
-TOTAL_FEE = 0.001   # 0.10% round-trip
+MAKER_FEE = 0.0002
+TAKER_FEE = 0.0005
+TOTAL_FEE = 0.001
 
-# Risk Management
-MAX_RISK_PER_TRADE = 0.03    # 3% max per trade
-MAX_DAILY_LOSS = 0.08        # 8% max daily loss
-MAX_DRAWDOWN = 0.05          # 5% max drawdown
-MIN_CONFIDENCE = 55          # Trade at 55%+ confidence (more aggressive for small accounts)
-MAX_POSITIONS = 2            # Trade up to 2 assets simultaneously
-SCAN_INTERVAL = 1           # Scan every 1 second (60x per minute)
+MAX_RISK_PER_TRADE = 0.03
+MAX_DAILY_LOSS = 0.08
+MAX_DRAWDOWN = 0.05
+MIN_CONFIDENCE = 65           # LOWERED to 65% for more trades
+MAX_POSITIONS = 2
+SCAN_INTERVAL = 1
 
-# Profit Targets (Dynamic based on volatility)
-BASE_TARGET = 0.008          # 0.8% base target
-BASE_STOP = 0.004            # 0.4% base stop (2:1 R:R)
-BREAKEVEN_TRIGGER = 0.003    # Move to breakeven at 0.3%
-TRAIL_TRIGGER = 0.005        # Start trailing at 0.5%
-TRAIL_DISTANCE = 0.002       # 0.2% trailing distance
+BASE_TARGET = 0.008
+BASE_STOP = 0.004
+BREAKEVEN_TRIGGER = 0.003
+TRAIL_TRIGGER = 0.005
+TRAIL_DISTANCE = 0.002
 
 # =============================================================================
 # GLOBAL STATE
@@ -113,13 +104,11 @@ orderbooks = {}
 price_history = {s: deque(maxlen=500) for s in ASSETS}
 positions = {}
 
-# Account
 account_balance = 0
 starting_balance = 0
 daily_pnl = 0
 daily_start_balance = 0
 
-# Market Data
 market_sentiment = {
     'fear_greed': 50,
     'fear_greed_class': 'Neutral',
@@ -129,7 +118,6 @@ market_sentiment = {
     'last_update': 0
 }
 
-# Statistics
 stats = {
     'trades': 0, 'wins': 0, 'losses': 0,
     'gross_pnl': 0, 'fees_paid': 0, 'net_pnl': 0,
@@ -138,8 +126,203 @@ stats = {
     'strategies': {}
 }
 
+trade_history = []
+
 running = True
+trading_active = True  # Can be toggled via Telegram
 ws_connected = False
+last_telegram_update = 0
+
+# =============================================================================
+# TELEGRAM FUNCTIONS
+# =============================================================================
+
+def telegram_send(message):
+    """Send message to Telegram"""
+    global TELEGRAM_CHAT_ID
+    
+    if not TELEGRAM_ENABLED or not TELEGRAM_CHAT_ID:
+        return False
+    
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+        resp = requests.post(url, json=data, timeout=10)
+        return resp.status_code == 200
+    except:
+        return False
+
+def telegram_get_updates():
+    """Get updates from Telegram"""
+    global last_telegram_update, TELEGRAM_CHAT_ID, trading_active, running
+    
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        params = {"offset": last_telegram_update + 1, "timeout": 1}
+        resp = requests.get(url, params=params, timeout=5)
+        
+        if resp.status_code != 200:
+            return
+        
+        data = resp.json()
+        if not data.get('ok'):
+            return
+        
+        for update in data.get('result', []):
+            last_telegram_update = update['update_id']
+            
+            message = update.get('message', {})
+            chat_id = message.get('chat', {}).get('id')
+            text = message.get('text', '').strip().lower()
+            
+            if chat_id:
+                # Set chat ID if not set
+                if not TELEGRAM_CHAT_ID:
+                    TELEGRAM_CHAT_ID = chat_id
+                    telegram_send("🤖 <b>ALADDIN BOT CONNECTED!</b>\n\nI'm now linked to this chat.\n\nCommands:\n/start - Start trading\n/stop - Stop trading\n/status - Check status\n/trades - Trade history\n/settings - View settings\n/kill - Shutdown bot")
+                    print(f"📱 Telegram connected! Chat ID: {chat_id}")
+                
+                # Process commands
+                if text == '/start':
+                    trading_active = True
+                    telegram_send("🚀 <b>TRADING STARTED!</b>\n\nBot is now actively looking for trades.")
+                    print("📱 Telegram: Trading STARTED")
+                    
+                elif text == '/stop':
+                    trading_active = False
+                    telegram_send("🛑 <b>TRADING STOPPED!</b>\n\nBot is paused. Existing positions will be managed.")
+                    print("📱 Telegram: Trading STOPPED")
+                    
+                elif text == '/status':
+                    send_status_message()
+                    
+                elif text == '/trades':
+                    send_trades_message()
+                    
+                elif text == '/settings':
+                    send_settings_message()
+                    
+                elif text == '/kill':
+                    telegram_send("💀 <b>SHUTTING DOWN BOT...</b>\n\nGoodbye!")
+                    print("📱 Telegram: KILL command received")
+                    running = False
+                    
+                elif text.startswith('/'):
+                    telegram_send("❓ Unknown command.\n\nAvailable:\n/start /stop /status /trades /settings /kill")
+    except:
+        pass
+
+def send_status_message():
+    """Send status to Telegram"""
+    wr = stats['wins'] / max(1, stats['trades']) * 100
+    
+    pos_text = ""
+    if positions:
+        for sym, pos in positions.items():
+            pos_text += f"\n   • {sym} {pos.side}: ${pos.net_pnl:+.4f}"
+    else:
+        pos_text = "\n   No open positions"
+    
+    affordable = get_affordable_assets()
+    assets_str = ', '.join([f"{a['symbol']}" for a in affordable]) if affordable else "None"
+    
+    msg = f"""📊 <b>STATUS REPORT</b>
+
+💰 <b>Account:</b>
+   Balance: ${account_balance:.4f}
+   Daily P&L: ${daily_pnl:+.4f}
+   Total P&L: ${stats['net_pnl']:+.4f}
+
+📈 <b>Performance:</b>
+   Trades: {stats['trades']}
+   Win Rate: {wr:.1f}%
+   Wins: {stats['wins']} | Losses: {stats['losses']}
+
+📍 <b>Positions:</b>{pos_text}
+
+🌍 <b>Market:</b>
+   Fear & Greed: {market_sentiment['fear_greed']} ({market_sentiment['fear_greed_class']})
+   Trend: {market_sentiment['global_trend']}
+   Tradeable: {assets_str}
+
+🤖 <b>Bot Status:</b> {'🟢 ACTIVE' if trading_active else '🔴 PAUSED'}"""
+    
+    telegram_send(msg)
+
+def send_trades_message():
+    """Send recent trades to Telegram"""
+    if not trade_history:
+        telegram_send("📜 <b>TRADE HISTORY</b>\n\nNo trades yet.")
+        return
+    
+    recent = trade_history[-10:]  # Last 10 trades
+    
+    msg = "📜 <b>RECENT TRADES</b>\n"
+    for t in reversed(recent):
+        emoji = "✅" if t['pnl'] > 0 else "❌"
+        msg += f"\n{emoji} {t['symbol']} {t['side']}: ${t['pnl']:+.4f} ({t['strategy']})"
+    
+    telegram_send(msg)
+
+def send_settings_message():
+    """Send settings to Telegram"""
+    msg = f"""⚙️ <b>BOT SETTINGS</b>
+
+🎯 <b>Trading:</b>
+   Min Confidence: {MIN_CONFIDENCE}%
+   Max Positions: {MAX_POSITIONS}
+   Scan Interval: {SCAN_INTERVAL}s
+
+💰 <b>Risk:</b>
+   Max Risk/Trade: {MAX_RISK_PER_TRADE*100}%
+   Max Daily Loss: {MAX_DAILY_LOSS*100}%
+   Max Drawdown: {MAX_DRAWDOWN*100}%
+
+📊 <b>Targets:</b>
+   Base Target: {BASE_TARGET*100}%
+   Base Stop: {BASE_STOP*100}%
+   Breakeven: {BREAKEVEN_TRIGGER*100}%
+   Trail Start: {TRAIL_TRIGGER*100}%"""
+    
+    telegram_send(msg)
+
+def send_trade_alert(action, symbol, side, price, pnl=None, confidence=None, strategy=None, reasons=None):
+    """Send trade alert to Telegram"""
+    if action == 'OPEN':
+        reasons_text = "\n".join([f"   • {r}" for r in (reasons or [])])
+        msg = f"""🚀 <b>TRADE OPENED</b>
+
+📊 {symbol} <b>{side}</b>
+💰 Entry: ${price:.4f}
+🎯 Confidence: {confidence}%
+📈 Strategy: {strategy}
+
+<b>Analysis:</b>
+{reasons_text}"""
+    
+    elif action == 'CLOSE':
+        emoji = "🎉" if pnl > 0 else "❌"
+        msg = f"""{emoji} <b>TRADE CLOSED</b>
+
+📊 {symbol} {side}
+💰 Exit: ${price:.4f}
+💵 P&L: <b>${pnl:+.4f}</b>
+📈 Strategy: {strategy}"""
+    
+    telegram_send(msg)
+
+def run_telegram():
+    """Telegram polling thread"""
+    while running:
+        try:
+            telegram_get_updates()
+        except:
+            pass
+        time.sleep(2)
 
 # =============================================================================
 # API FUNCTIONS
@@ -176,7 +359,6 @@ def api_post(endpoint, data):
     return None
 
 def get_account_balance():
-    """Fetch real account balance"""
     global account_balance, starting_balance, daily_start_balance
     
     resp = api_get('/v2/wallet/balances')
@@ -191,24 +373,11 @@ def get_account_balance():
                 return account_balance
     return 0
 
-def get_existing_positions():
-    """Load existing positions"""
-    positions_list = []
-    for asset in ['BTC', 'ETH', 'SOL', 'XRP']:
-        resp = api_get(f'/v2/positions?underlying_asset_symbol={asset}')
-        if resp and resp.get('success'):
-            for pos in resp.get('result', []):
-                size = float(pos.get('size', 0))
-                if size != 0:
-                    positions_list.append(pos)
-    return positions_list
-
 # =============================================================================
 # SENTIMENT ANALYSIS
 # =============================================================================
 
 def fetch_fear_greed():
-    """Crypto Fear & Greed Index"""
     try:
         resp = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
         if resp.status_code == 200:
@@ -219,7 +388,6 @@ def fetch_fear_greed():
     return 50, "Neutral"
 
 def fetch_news_sentiment():
-    """Analyze crypto news sentiment"""
     bullish_keywords = ['bullish', 'rally', 'surge', 'buy', 'breakout', 'adoption', 'etf', 'institutional', 'higher']
     bearish_keywords = ['bearish', 'crash', 'dump', 'sell', 'breakdown', 'ban', 'hack', 'fraud', 'lower']
     
@@ -236,28 +404,24 @@ def fetch_news_sentiment():
                     score += (bull - bear) / (bull + bear)
     except:
         pass
-    return score / 3 if score else 0  # Normalize
+    return score / 3 if score else 0
 
 def update_market_sentiment():
-    """Update all sentiment indicators"""
     global market_sentiment
     
     now = time.time()
-    if now - market_sentiment['last_update'] < 180:  # 3 min cache
+    if now - market_sentiment['last_update'] < 180:
         return
     
     print("\n📊 Updating market intelligence...")
     
-    # Fear & Greed
     fg, fg_class = fetch_fear_greed()
     market_sentiment['fear_greed'] = fg
     market_sentiment['fear_greed_class'] = fg_class
     
-    # News
     news = fetch_news_sentiment()
     market_sentiment['news_score'] = news
     
-    # BTC Trend (leader)
     if 'BTCUSD' in price_history and len(price_history['BTCUSD']) > 50:
         btc = list(price_history['BTCUSD'])
         ema20 = sum(btc[-20:]) / 20
@@ -322,7 +486,6 @@ def atr(symbol, period=14):
     return mean(trs)
 
 def orderbook_pressure(symbol):
-    """Analyze order book for buy/sell pressure"""
     if symbol not in orderbooks:
         return 0, False, False
     
@@ -343,7 +506,6 @@ def orderbook_pressure(symbol):
         
         imbalance = (bid_vol - ask_vol) / total * 100
         
-        # Detect walls
         avg_bid = bid_vol / len(bids)
         avg_ask = ask_vol / len(asks)
         buy_wall = any(float(b[1]) > avg_bid * 4 for b in bids[:5])
@@ -354,35 +516,30 @@ def orderbook_pressure(symbol):
         return 0, False, False
 
 def momentum_score(symbol):
-    """Multi-timeframe momentum"""
     if len(price_history[symbol]) < 100:
         return 0, 'neutral'
     
     prices_list = list(price_history[symbol])
     curr = prices_list[-1]
     
-    # 3 timeframes
     short_mom = (curr - prices_list[-10]) / prices_list[-10] * 100
     med_mom = (curr - prices_list[-30]) / prices_list[-30] * 100
     long_mom = (curr - prices_list[-100]) / prices_list[-100] * 100
     
     score = short_mom * 0.5 + med_mom * 0.3 + long_mom * 0.2
     
-    if score > 0.12:
+    if score > 0.08:  # LOWERED threshold
         return score, 'bullish'
-    elif score < -0.12:
+    elif score < -0.08:  # LOWERED threshold
         return score, 'bearish'
     return score, 'neutral'
 
 # =============================================================================
-# 5 WINNING STRATEGIES
+# 5 WINNING STRATEGIES - IMPROVED FOR MORE SIGNALS
 # =============================================================================
 
 def strategy_trend_following(symbol):
-    """
-    Strategy 1: Trend Following with Confirmation
-    Expected Win Rate: 65%
-    """
+    """Strategy 1: Trend Following - IMPROVED"""
     if len(price_history[symbol]) < 100:
         return None, 0, []
     
@@ -400,62 +557,79 @@ def strategy_trend_following(symbol):
     conf = 0
     direction = None
     
-    # LONG: All EMAs aligned bullish
+    # LONG: EMAs aligned bullish
     if ema9 > ema21 > ema50 and curr > ema9:
         direction = 'LONG'
-        conf = 40
+        conf = 45  # Increased base
         reasons.append(f"📈 Bullish trend (EMA9 > EMA21 > EMA50)")
         
-        # Momentum confirmation
         mom, _ = momentum_score(symbol)
-        if mom > 0.08:
-            conf += 15
-            reasons.append(f"🚀 Strong momentum +{mom:.2f}%")
-        
-        # Order book confirmation
-        imb, wall, _ = orderbook_pressure(symbol)
-        if imb > 15:
+        if mom > 0.05:  # Lowered
             conf += 12
+            reasons.append(f"🚀 Momentum +{mom:.2f}%")
+        
+        imb, wall, _ = orderbook_pressure(symbol)
+        if imb > 10:  # Lowered
+            conf += 10
             reasons.append(f"📗 Buy pressure {imb:.0f}%")
         if wall:
-            conf += 8
-            reasons.append("🧱 Buy wall support")
-        
-        # Sentiment alignment
-        if market_sentiment['global_trend'] == 'bullish':
-            conf += 10
-            reasons.append("🌍 Global trend bullish")
+            conf += 5
+            reasons.append("🧱 Buy wall")
     
-    # SHORT: All EMAs aligned bearish
+    # SHORT: EMAs aligned bearish
     elif ema9 < ema21 < ema50 and curr < ema9:
         direction = 'SHORT'
-        conf = 40
+        conf = 45  # Increased base
         reasons.append(f"📉 Bearish trend (EMA9 < EMA21 < EMA50)")
         
         mom, _ = momentum_score(symbol)
-        if mom < -0.08:
-            conf += 15
-            reasons.append(f"💥 Strong downward momentum {mom:.2f}%")
+        if mom < -0.05:  # Lowered
+            conf += 12
+            reasons.append(f"💥 Momentum {mom:.2f}%")
         
         imb, _, wall = orderbook_pressure(symbol)
+        if imb < -10:  # Lowered
+            conf += 10
+            reasons.append(f"📕 Sell pressure {imb:.0f}%")
+        if wall:
+            conf += 5
+            reasons.append("🧱 Sell wall")
+    
+    # PARTIAL TREND - Still tradeable
+    elif ema9 > ema21 and curr > ema9:
+        direction = 'LONG'
+        conf = 35
+        reasons.append(f"📈 Short-term bullish (EMA9 > EMA21)")
+        
+        mom, _ = momentum_score(symbol)
+        if mom > 0.05:
+            conf += 15
+            reasons.append(f"🚀 Momentum +{mom:.2f}%")
+        
+        imb, _, _ = orderbook_pressure(symbol)
+        if imb > 15:
+            conf += 12
+            reasons.append(f"📗 Buy pressure {imb:.0f}%")
+    
+    elif ema9 < ema21 and curr < ema9:
+        direction = 'SHORT'
+        conf = 35
+        reasons.append(f"📉 Short-term bearish (EMA9 < EMA21)")
+        
+        mom, _ = momentum_score(symbol)
+        if mom < -0.05:
+            conf += 15
+            reasons.append(f"💥 Momentum {mom:.2f}%")
+        
+        imb, _, _ = orderbook_pressure(symbol)
         if imb < -15:
             conf += 12
             reasons.append(f"📕 Sell pressure {imb:.0f}%")
-        if wall:
-            conf += 8
-            reasons.append("🧱 Sell wall resistance")
-        
-        if market_sentiment['global_trend'] == 'bearish':
-            conf += 10
-            reasons.append("🌍 Global trend bearish")
     
     return direction, conf, reasons
 
 def strategy_mean_reversion(symbol):
-    """
-    Strategy 2: Mean Reversion at Extremes
-    Expected Win Rate: 70%
-    """
+    """Strategy 2: Mean Reversion - IMPROVED"""
     if len(price_history[symbol]) < 50:
         return None, 0, []
     
@@ -472,59 +646,53 @@ def strategy_mean_reversion(symbol):
     conf = 0
     direction = None
     
-    # OVERSOLD - LONG
-    if curr <= lower and rsi_val < 30:
+    # OVERSOLD - LONG (relaxed conditions)
+    if curr <= lower * 1.002 and rsi_val < 35:  # Relaxed
         direction = 'LONG'
         conf = 45
-        reasons.append(f"📉 Price at lower BB ${curr:.2f}")
-        reasons.append(f"😰 RSI oversold: {rsi_val:.0f}")
+        reasons.append(f"📉 Near lower BB ${curr:.2f}")
+        reasons.append(f"😰 RSI: {rsi_val:.0f}")
         
-        if rsi_val < 22:
+        if rsi_val < 25:
             conf += 15
-            reasons.append("🔥 EXTREME oversold!")
+            reasons.append("🔥 Oversold!")
         
-        # Reversal candle
         if prices_list[-1] > prices_list[-2]:
-            conf += 10
-            reasons.append("📊 Bullish reversal candle")
+            conf += 8
+            reasons.append("📊 Reversal candle")
         
-        # Fear sentiment = good for buying
-        if market_sentiment['fear_greed'] < 30:
-            conf += 10
-            reasons.append(f"😰 Market fear (contrarian buy)")
+        if market_sentiment['fear_greed'] < 35:
+            conf += 8
+            reasons.append(f"😰 Market fear")
     
-    # OVERBOUGHT - SHORT
-    elif curr >= upper and rsi_val > 70:
+    # OVERBOUGHT - SHORT (relaxed conditions)
+    elif curr >= upper * 0.998 and rsi_val > 65:  # Relaxed
         direction = 'SHORT'
         conf = 45
-        reasons.append(f"📈 Price at upper BB ${curr:.2f}")
-        reasons.append(f"😊 RSI overbought: {rsi_val:.0f}")
+        reasons.append(f"📈 Near upper BB ${curr:.2f}")
+        reasons.append(f"😊 RSI: {rsi_val:.0f}")
         
-        if rsi_val > 78:
+        if rsi_val > 75:
             conf += 15
-            reasons.append("🔥 EXTREME overbought!")
+            reasons.append("🔥 Overbought!")
         
         if prices_list[-1] < prices_list[-2]:
-            conf += 10
-            reasons.append("📊 Bearish reversal candle")
+            conf += 8
+            reasons.append("📊 Reversal candle")
         
-        if market_sentiment['fear_greed'] > 70:
-            conf += 10
-            reasons.append(f"😊 Market greed (contrarian sell)")
+        if market_sentiment['fear_greed'] > 65:
+            conf += 8
+            reasons.append(f"😊 Market greed")
     
     return direction, conf, reasons
 
 def strategy_sentiment_divergence(symbol):
-    """
-    Strategy 3: Sentiment vs Price Divergence
-    Expected Win Rate: 75%
-    """
+    """Strategy 3: Sentiment Divergence - IMPROVED"""
     if len(price_history[symbol]) < 50:
         return None, 0, []
     
     prices_list = list(price_history[symbol])
     fg = market_sentiment['fear_greed']
-    news = market_sentiment['news_score']
     
     reasons = []
     conf = 0
@@ -532,58 +700,46 @@ def strategy_sentiment_divergence(symbol):
     
     mom, mom_dir = momentum_score(symbol)
     
-    # EXTREME FEAR but price recovering = BUY
-    if fg < 25:
-        if mom_dir == 'bullish' and mom > 0.04:
+    # FEAR + price recovering = BUY
+    if fg < 30:  # Relaxed from 25
+        if mom > 0.02:  # Relaxed
             direction = 'LONG'
             conf = 50
-            reasons.append(f"😰 Extreme Fear ({fg}) + Price recovering")
-            reasons.append("📈 CONTRARIAN BUY signal")
+            reasons.append(f"😰 Fear ({fg}) + Price up")
+            reasons.append("📈 CONTRARIAN BUY")
             
-            if news > 0:
-                conf += 12
-                reasons.append(f"📰 News turning positive: {news:+.2f}")
-            
-            imb, wall, _ = orderbook_pressure(symbol)
-            if imb > 10:
+            imb, _, _ = orderbook_pressure(symbol)
+            if imb > 5:
                 conf += 10
-                reasons.append("🐋 Smart money accumulating")
+                reasons.append("🐋 Accumulation")
             
-            # RSI confirmation
             rsi_val = rsi(prices_list)
-            if rsi_val < 40:
+            if rsi_val < 45:
                 conf += 8
-                reasons.append(f"📊 RSI still low: {rsi_val:.0f}")
+                reasons.append(f"📊 RSI low: {rsi_val:.0f}")
     
-    # EXTREME GREED but price weakening = SELL
-    elif fg > 75:
-        if mom_dir == 'bearish' and mom < -0.04:
+    # GREED + price weakening = SELL
+    elif fg > 70:  # Relaxed from 75
+        if mom < -0.02:  # Relaxed
             direction = 'SHORT'
             conf = 50
-            reasons.append(f"😊 Extreme Greed ({fg}) + Price weakening")
-            reasons.append("📉 CONTRARIAN SELL signal")
+            reasons.append(f"😊 Greed ({fg}) + Price down")
+            reasons.append("📉 CONTRARIAN SELL")
             
-            if news < 0:
-                conf += 12
-                reasons.append(f"📰 News turning negative: {news:.2f}")
-            
-            imb, _, wall = orderbook_pressure(symbol)
-            if imb < -10:
+            imb, _, _ = orderbook_pressure(symbol)
+            if imb < -5:
                 conf += 10
-                reasons.append("🐋 Smart money distributing")
+                reasons.append("🐋 Distribution")
             
             rsi_val = rsi(prices_list)
-            if rsi_val > 60:
+            if rsi_val > 55:
                 conf += 8
-                reasons.append(f"📊 RSI still high: {rsi_val:.0f}")
+                reasons.append(f"📊 RSI high: {rsi_val:.0f}")
     
     return direction, conf, reasons
 
 def strategy_smart_money(symbol):
-    """
-    Strategy 4: Smart Money Flow Detection
-    Expected Win Rate: 72%
-    """
+    """Strategy 4: Smart Money - IMPROVED"""
     if len(price_history[symbol]) < 30:
         return None, 0, []
     
@@ -595,102 +751,135 @@ def strategy_smart_money(symbol):
     
     mom, _ = momentum_score(symbol)
     
-    # Strong accumulation
-    if imb > 35 and buy_wall:
+    # Strong accumulation (relaxed)
+    if imb > 25:  # Lowered from 35
         direction = 'LONG'
-        conf = 50
-        reasons.append(f"🐋 ACCUMULATION detected ({imb:.0f}% buy)")
-        reasons.append("🧱 Large buy wall present")
+        conf = 45
+        reasons.append(f"🐋 Accumulation ({imb:.0f}% buy)")
         
-        if mom >= 0:
-            conf += 18
-            reasons.append("📈 Price holding during accumulation")
-        
-        if market_sentiment['fear_greed'] < 45:
+        if buy_wall:
             conf += 10
-            reasons.append("😰 Buying during fear = smart money")
+            reasons.append("🧱 Buy wall")
+        
+        if mom >= -0.02:  # Relaxed
+            conf += 15
+            reasons.append("📈 Price stable/up")
+        
+        if market_sentiment['fear_greed'] < 50:
+            conf += 8
+            reasons.append("😰 Buying fear")
     
-    # Strong distribution
-    elif imb < -35 and sell_wall:
+    # Strong distribution (relaxed)
+    elif imb < -25:  # Lowered from -35
         direction = 'SHORT'
-        conf = 50
-        reasons.append(f"🐋 DISTRIBUTION detected ({imb:.0f}% sell)")
-        reasons.append("🧱 Large sell wall present")
+        conf = 45
+        reasons.append(f"🐋 Distribution ({imb:.0f}% sell)")
         
-        if mom <= 0:
-            conf += 18
-            reasons.append("📉 Price weakening during distribution")
-        
-        if market_sentiment['fear_greed'] > 55:
+        if sell_wall:
             conf += 10
-            reasons.append("😊 Selling during greed = smart money")
+            reasons.append("🧱 Sell wall")
+        
+        if mom <= 0.02:  # Relaxed
+            conf += 15
+            reasons.append("📉 Price stable/down")
+        
+        if market_sentiment['fear_greed'] > 50:
+            conf += 8
+            reasons.append("😊 Selling greed")
     
     return direction, conf, reasons
 
 def strategy_breakout(symbol):
-    """
-    Strategy 5: Breakout with Momentum
-    Expected Win Rate: 60%
-    """
+    """Strategy 5: Breakout - IMPROVED"""
     if len(price_history[symbol]) < 100:
         return None, 0, []
     
     prices_list = list(price_history[symbol])
     curr = prices_list[-1]
     
-    # Recent range (last 60 ticks)
     recent = prices_list[-60:]
     high = max(recent)
     low = min(recent)
-    
-    volatility = atr(symbol)
-    if not volatility:
-        return None, 0, []
     
     reasons = []
     conf = 0
     direction = None
     
-    # Breakout UP
-    if curr > high * 1.0008:  # Break with buffer
+    # Breakout UP (relaxed)
+    if curr > high * 1.0005:  # Lowered from 1.0008
         direction = 'LONG'
-        conf = 40
+        conf = 42
         reasons.append(f"🚀 Breakout above ${high:.2f}")
         
         mom, _ = momentum_score(symbol)
-        if mom > 0.12:
-            conf += 18
-            reasons.append(f"💨 Strong breakout momentum +{mom:.2f}%")
+        if mom > 0.08:
+            conf += 15
+            reasons.append(f"💨 Momentum +{mom:.2f}%")
         
         imb, _, _ = orderbook_pressure(symbol)
-        if imb > 15:
-            conf += 12
-            reasons.append("📗 Volume supporting breakout")
-        
-        # Trend alignment
-        if market_sentiment['global_trend'] == 'bullish':
+        if imb > 10:
             conf += 10
-            reasons.append("🌍 Trend-aligned breakout")
+            reasons.append("📗 Volume support")
     
-    # Breakdown DOWN
-    elif curr < low * 0.9992:
+    # Breakdown DOWN (relaxed)
+    elif curr < low * 0.9995:  # Lowered from 0.9992
         direction = 'SHORT'
-        conf = 40
+        conf = 42
         reasons.append(f"💥 Breakdown below ${low:.2f}")
         
         mom, _ = momentum_score(symbol)
-        if mom < -0.12:
-            conf += 18
-            reasons.append(f"💨 Strong breakdown momentum {mom:.2f}%")
+        if mom < -0.08:
+            conf += 15
+            reasons.append(f"💨 Momentum {mom:.2f}%")
         
         imb, _, _ = orderbook_pressure(symbol)
-        if imb < -15:
-            conf += 12
-            reasons.append("📕 Volume supporting breakdown")
-        
-        if market_sentiment['global_trend'] == 'bearish':
+        if imb < -10:
             conf += 10
-            reasons.append("🌍 Trend-aligned breakdown")
+            reasons.append("📕 Volume support")
+    
+    return direction, conf, reasons
+
+def strategy_momentum_only(symbol):
+    """Strategy 6: Pure Momentum - NEW for more trades"""
+    if len(price_history[symbol]) < 100:
+        return None, 0, []
+    
+    prices_list = list(price_history[symbol])
+    mom, mom_dir = momentum_score(symbol)
+    
+    reasons = []
+    conf = 0
+    direction = None
+    
+    if mom_dir == 'bullish' and mom > 0.10:
+        direction = 'LONG'
+        conf = 40
+        reasons.append(f"🚀 Strong momentum +{mom:.2f}%")
+        
+        imb, _, _ = orderbook_pressure(symbol)
+        if imb > 10:
+            conf += 15
+            reasons.append(f"📗 Order book supports")
+        
+        rsi_val = rsi(prices_list)
+        if rsi_val < 70:
+            conf += 10
+            reasons.append(f"📊 RSI OK: {rsi_val:.0f}")
+    
+    elif mom_dir == 'bearish' and mom < -0.10:
+        direction = 'SHORT'
+        conf = 40
+        reasons.append(f"💥 Strong momentum {mom:.2f}%")
+        
+        imb, _, _ = orderbook_pressure(symbol)
+        if imb < -10:
+            conf += 15
+            reasons.append(f"📕 Order book supports")
+        
+        rsi_val = rsi(prices_list)
+        if rsi_val > 30:
+            conf += 10
+            reasons.append(f"📊 RSI OK: {rsi_val:.0f}")
     
     return direction, conf, reasons
 
@@ -710,27 +899,21 @@ class Position:
         self.reasons = reasons
         self.start_time = time.time()
         
-        # Fees
         self.entry_fee = value * TAKER_FEE
         self.total_fee = value * TOTAL_FEE
         
-        # P&L
         self.current_price = entry
         self.gross_pnl = 0
         self.net_pnl = -self.entry_fee
         self.gross_pct = 0
         self.peak_pct = 0
         
-        # Dynamic targets based on ATR
         sym_atr = atr(symbol) or (entry * 0.005)
         atr_pct = sym_atr / entry
         
-        # Target: 2x ATR, min 0.6%
         self.target_pct = max(0.006, atr_pct * 2)
-        # Stop: 1x ATR, min 0.3%
         self.stop_pct = max(0.003, atr_pct * 1)
         
-        # Protection levels
         self.breakeven_active = False
         self.trailing_active = False
         self.current_stop_pct = self.stop_pct
@@ -749,17 +932,14 @@ class Position:
         if self.gross_pct > self.peak_pct:
             self.peak_pct = self.gross_pct
         
-        # Breakeven at 0.3%
         if self.gross_pct >= 0.003 and not self.breakeven_active:
             self.breakeven_active = True
-            self.current_stop_pct = -0.0002  # Tiny profit buffer
+            self.current_stop_pct = -0.0002
         
-        # Trailing at 0.5%
         if self.gross_pct >= 0.005 and not self.trailing_active:
             self.trailing_active = True
         
         if self.trailing_active:
-            # Trail 0.15% behind peak
             new_stop = self.peak_pct - 0.0015
             if new_stop > self.current_stop_pct:
                 self.current_stop_pct = new_stop
@@ -769,7 +949,6 @@ class Position:
 # =============================================================================
 
 def calculate_max_position(symbol, price):
-    """Calculate maximum position size based on available capital"""
     global account_balance
     
     asset = ASSETS[symbol]
@@ -779,17 +958,13 @@ def calculate_max_position(symbol, price):
     contract_value = price * contract_size
     margin_per_contract = contract_value / leverage
     
-    # Calculate available capital (considering existing positions)
     used_margin = sum(pos.value / ASSETS[pos.symbol]['leverage'] for pos in positions.values())
-    available = max(0, account_balance - used_margin) * 0.85  # Keep 15% buffer
+    available = max(0, account_balance - used_margin) * 0.85
     
     if available < margin_per_contract:
-        return 0, 0  # Not enough capital
+        return 0, 0
     
-    # Max contracts we can afford
     max_contracts = int(available / margin_per_contract)
-    
-    # Cap at reasonable size based on risk
     risk_cap = int((account_balance * MAX_RISK_PER_TRADE * 10) / margin_per_contract)
     
     contracts = max(1, min(max_contracts, risk_cap))
@@ -798,22 +973,17 @@ def calculate_max_position(symbol, price):
     return contracts, position_value
 
 def get_affordable_assets():
-    """
-    Get list of assets we can afford to trade based on current capital.
-    Returns assets sorted by affordability (cheapest first).
-    """
     global account_balance
     
-    # Calculate available capital
     used_margin = sum(pos.value / ASSETS[pos.symbol]['leverage'] for pos in positions.values())
     available = max(0, account_balance - used_margin)
     
     affordable = []
     
     for symbol, asset in ASSETS.items():
-        if symbol in positions:  # Skip if already have position
+        if symbol in positions:
             continue
-        if symbol not in prices:  # Skip if no price data
+        if symbol not in prices:
             continue
             
         price = prices[symbol]
@@ -829,28 +999,23 @@ def get_affordable_assets():
                 'price': price
             })
     
-    # Sort by margin (cheapest first - XRP, SOL, ETH, BTC)
     affordable.sort(key=lambda x: x['margin_per_lot'])
-    
     return affordable
 
 def can_trade_multiple_assets():
-    """Check if we have enough capital to trade multiple assets"""
     affordable = get_affordable_assets()
     
     if len(affordable) < 2:
         return False
     
-    # Need at least enough for 2 different assets
     total_min_margin = affordable[0]['margin_per_lot'] + affordable[1]['margin_per_lot']
     
     used_margin = sum(pos.value / ASSETS[pos.symbol]['leverage'] for pos in positions.values())
     available = max(0, account_balance - used_margin)
     
-    return available >= total_min_margin * 1.2  # 20% buffer
+    return available >= total_min_margin * 1.2
 
 def open_position(symbol, side, price, confidence, strategy, reasons):
-    """Open new position"""
     global positions
     
     if symbol in positions:
@@ -863,39 +1028,26 @@ def open_position(symbol, side, price, confidence, strategy, reasons):
     pos = Position(symbol, side, price, contracts, value, confidence, strategy, reasons)
     positions[symbol] = pos
     
-    # Log
+    # Send Telegram alert
+    send_trade_alert('OPEN', symbol, side, price, confidence=confidence, strategy=strategy, reasons=reasons)
+    
     print("\n" + "💎"*25)
     print(f"\n🚀 TRADE OPENED - {strategy}")
     print(f"\n   📊 {symbol} {side}")
     print(f"   🎯 Confidence: {confidence}%")
     print()
-    print(f"   📈 Analysis:")
     for r in reasons:
         print(f"      • {r}")
     print()
     print(f"   💰 Entry: ${price:.4f}")
     print(f"   📦 Contracts: {contracts}")
     print(f"   💵 Value: ${value:.4f}")
-    print(f"   💸 Fees: ${pos.total_fee:.4f}")
-    print()
-    
-    if side == 'LONG':
-        target = price * (1 + pos.target_pct)
-        stop = price * (1 - pos.stop_pct)
-    else:
-        target = price * (1 - pos.target_pct)
-        stop = price * (1 + pos.stop_pct)
-    
-    print(f"   🎯 Target: ${target:.4f} (+{pos.target_pct*100:.2f}%)")
-    print(f"   🛑 Stop: ${stop:.4f} (-{pos.stop_pct*100:.2f}%)")
-    print(f"   📊 R:R = 1:{pos.target_pct/pos.stop_pct:.1f}")
     print("\n" + "💎"*25)
     
     return True
 
 def close_position(symbol, reason, price):
-    """Close position"""
-    global positions, daily_pnl, stats
+    global positions, daily_pnl, stats, trade_history
     
     if symbol not in positions:
         return
@@ -903,14 +1055,12 @@ def close_position(symbol, reason, price):
     pos = positions[symbol]
     pos.update(price)
     
-    # Update stats
     stats['trades'] += 1
     stats['gross_pnl'] += pos.gross_pnl
     stats['fees_paid'] += pos.total_fee
     stats['net_pnl'] += pos.net_pnl
     daily_pnl += pos.net_pnl
     
-    # Strategy stats
     if pos.strategy not in stats['strategies']:
         stats['strategies'][pos.strategy] = {'trades': 0, 'wins': 0, 'pnl': 0}
     stats['strategies'][pos.strategy]['trades'] += 1
@@ -928,33 +1078,33 @@ def close_position(symbol, reason, price):
         if pos.net_pnl < stats['worst_trade']:
             stats['worst_trade'] = pos.net_pnl
     
+    # Log trade
+    trade_history.append({
+        'symbol': symbol,
+        'side': pos.side,
+        'entry': pos.entry,
+        'exit': price,
+        'pnl': pos.net_pnl,
+        'strategy': pos.strategy,
+        'time': datetime.now().isoformat()
+    })
+    
+    # Send Telegram alert
+    send_trade_alert('CLOSE', symbol, pos.side, price, pnl=pos.net_pnl, strategy=pos.strategy)
+    
     duration = int(time.time() - pos.start_time)
-    net_pct = pos.gross_pct - TOTAL_FEE
     
     print("\n" + "🚀"*25)
     print(f"\n{emoji} TRADE CLOSED - {reason}")
     print(f"\n   📊 {symbol} {pos.side} ({pos.strategy})")
     print(f"   ⏱️ Duration: {duration}s")
-    print()
-    print(f"   💰 P&L:")
-    print(f"      Entry: ${pos.entry:.4f} → Exit: ${price:.4f}")
-    print(f"      Peak: {pos.peak_pct*100:+.3f}%")
-    print(f"      Gross: ${pos.gross_pnl:+.4f} ({pos.gross_pct*100:+.3f}%)")
-    print(f"      Fees: -${pos.total_fee:.4f}")
-    print(f"      NET: ${pos.net_pnl:+.4f} ({net_pct*100:+.3f}%)")
-    
-    if pos.trailing_active:
-        print(f"\n   ✅ TRAILING STOP protected profits!")
-    elif pos.breakeven_active:
-        print(f"\n   ✅ BREAKEVEN protection activated!")
-    
-    print(f"\n   📊 Session: {stats['trades']} trades, {stats['wins']} wins, ${stats['net_pnl']:+.4f}")
+    print(f"   💰 NET: ${pos.net_pnl:+.4f}")
+    print(f"\n   📊 Session: {stats['trades']} trades, {stats['wins']} wins")
     print("\n" + "🚀"*25)
     
     del positions[symbol]
 
 def manage_positions():
-    """Manage all open positions"""
     for symbol in list(positions.keys()):
         pos = positions[symbol]
         price = prices.get(symbol)
@@ -963,26 +1113,22 @@ def manage_positions():
         
         pos.update(price)
         
-        # Check exits
         should_exit = False
         reason = ""
         
-        # Target hit
         if pos.gross_pct >= pos.target_pct:
             should_exit = True
             reason = "🎯 TARGET HIT"
         
-        # Stop hit (using dynamic stop)
         elif pos.gross_pct <= -pos.current_stop_pct:
             if pos.trailing_active:
-                reason = f"📈 TRAILING STOP (peak: {pos.peak_pct*100:.2f}%)"
+                reason = f"📈 TRAILING STOP"
             elif pos.breakeven_active:
                 reason = "🔒 BREAKEVEN EXIT"
             else:
                 reason = "🛑 STOP LOSS"
             should_exit = True
         
-        # Time exit (5 min max)
         elif time.time() - pos.start_time > 300:
             if pos.net_pnl > 0:
                 should_exit = True
@@ -995,45 +1141,44 @@ def manage_positions():
             close_position(symbol, reason, price)
 
 # =============================================================================
-# SIGNAL FINDER
+# SIGNAL FINDER - IMPROVED
 # =============================================================================
 
 def find_best_signal():
-    """Find the best trade across all strategies and assets - SMART CAPITAL ALLOCATION"""
-    if len(positions) >= MAX_POSITIONS:
-        return None  # Max positions reached
+    """Find best signal - IMPROVED to trade both directions"""
+    if not trading_active:
+        return None
     
-    # Check daily loss limit
+    if len(positions) >= MAX_POSITIONS:
+        return None
+    
     if daily_pnl < -account_balance * MAX_DAILY_LOSS:
         return None
     
-    # Get affordable assets based on current capital
     affordable = get_affordable_assets()
     if not affordable:
-        return None  # Can't afford any trades
+        return None
     
-    # IMPORTANT: All positions must be in the SAME DIRECTION
+    # Get current direction if we have positions
     current_direction = None
     if positions:
         for sym, pos in positions.items():
             current_direction = pos.side
             break
     
-    # Decide trading mode based on capital
-    multi_asset_mode = can_trade_multiple_assets() and len(positions) == 0
-    
     best = None
     best_conf = 0
     
+    # 6 strategies now
     strategies = [
         ('Trend Following', strategy_trend_following),
         ('Mean Reversion', strategy_mean_reversion),
         ('Sentiment Divergence', strategy_sentiment_divergence),
         ('Smart Money', strategy_smart_money),
         ('Breakout', strategy_breakout),
+        ('Momentum', strategy_momentum_only),
     ]
     
-    # Only check affordable assets
     tradeable_symbols = [a['symbol'] for a in affordable]
     
     for symbol in tradeable_symbols:
@@ -1048,38 +1193,34 @@ def find_best_signal():
             if not direction:
                 continue
             
-            # CRITICAL: Only allow trades in SAME direction as existing positions
+            # Same direction enforcement for multiple positions
             if current_direction and direction != current_direction:
                 continue
             
+            # Apply sentiment adjustments
+            fg = market_sentiment['fear_greed']
+            
+            # Boost LONG in fear, SHORT in greed
+            if direction == 'LONG' and fg < 35:
+                conf += 8
+            elif direction == 'SHORT' and fg > 65:
+                conf += 8
+            # Penalize opposite
+            elif direction == 'LONG' and fg > 75:
+                conf -= 5
+            elif direction == 'SHORT' and fg < 25:
+                conf -= 5
+            
             if conf > best_conf:
-                # Apply sentiment adjustment
-                fg = market_sentiment['fear_greed']
-                if direction == 'LONG' and fg > 75:
-                    conf -= 8
-                elif direction == 'SHORT' and fg < 25:
-                    conf -= 8
-                elif direction == 'LONG' and fg < 35:
-                    conf += 5
-                elif direction == 'SHORT' and fg > 65:
-                    conf += 5
-                
-                # Boost confidence for cheaper assets when capital is low
-                if not multi_asset_mode:
-                    asset_info = next((a for a in affordable if a['symbol'] == symbol), None)
-                    if asset_info and asset_info['max_lots'] >= 5:
-                        conf += 3  # Prefer assets where we can get more lots
-                
-                if conf > best_conf:
-                    best_conf = conf
-                    best = {
-                        'symbol': symbol,
-                        'direction': direction,
-                        'confidence': conf,
-                        'strategy': name,
-                        'reasons': reasons,
-                        'price': prices[symbol]
-                    }
+                best_conf = conf
+                best = {
+                    'symbol': symbol,
+                    'direction': direction,
+                    'confidence': conf,
+                    'strategy': name,
+                    'reasons': reasons,
+                    'price': prices[symbol]
+                }
     
     if best and best['confidence'] >= MIN_CONFIDENCE:
         return best
@@ -1119,7 +1260,6 @@ def on_message(ws, msg):
                 prices[sym] = price
                 price_history[sym].append(price)
                 
-                # Update all positions on every tick
                 for s, pos in positions.items():
                     if s == sym:
                         pos.update(price)
@@ -1163,7 +1303,6 @@ def run_websocket():
 # =============================================================================
 
 def display_position(pos):
-    """Real-time position display"""
     hold = int(time.time() - pos.start_time)
     net_pct = pos.gross_pct - TOTAL_FEE
     
@@ -1179,13 +1318,11 @@ def display_position(pos):
     line = f"{color} {pos.symbol} {pos.side} | "
     line += f"${pos.current_price:.2f} | "
     line += f"NET: ${pos.net_pnl:+.4f} ({net_pct*100:+.2f}%) | "
-    line += f"Peak: {pos.peak_pct*100:+.2f}% | "
     line += f"{protection} | ⏱️{hold}s"
     
     return line
 
 def display_all_positions():
-    """Display all open positions in real-time"""
     lines = []
     total_upnl = 0
     
@@ -1193,7 +1330,6 @@ def display_all_positions():
         lines.append(display_position(pos))
         total_upnl += pos.net_pnl
     
-    # Build output
     output = " | ".join(lines)
     output += f" | TOTAL: ${total_upnl:+.4f}"
     
@@ -1201,26 +1337,20 @@ def display_all_positions():
     sys.stdout.flush()
 
 def display_status():
-    """Market status display with capital allocation info"""
     print("\n" + "─"*70)
     wr = stats['wins'] / max(1, stats['trades']) * 100
-    print(f"📊 STATUS | Balance: ${account_balance:.4f} | Net: ${stats['net_pnl']:+.4f} | WR: {wr:.0f}%")
+    status = "🟢 ACTIVE" if trading_active else "🔴 PAUSED"
+    print(f"📊 {status} | Balance: ${account_balance:.4f} | Net: ${stats['net_pnl']:+.4f} | WR: {wr:.0f}%")
     print("─"*70)
     
-    # Show capital allocation
     affordable = get_affordable_assets()
-    multi_mode = can_trade_multiple_assets()
     
     if affordable:
-        mode_str = 'MULTI-ASSET' if multi_mode else 'SINGLE-ASSET (Max Lots)'
-        print(f"💰 CAPITAL MODE: {mode_str}")
-        assets_str = ', '.join([f"{a['symbol']}({a['max_lots']}lots)" for a in affordable])
-        print(f"   Affordable: {assets_str}")
-    else:
-        print("⚠️ Insufficient capital for any trades")
+        print(f"💰 Tradeable: {', '.join([a['symbol'] for a in affordable])}")
     
     print("─"*70)
     
+    # Show all signals for each asset
     for sym in ASSETS:
         if sym not in prices or len(price_history[sym]) < 50:
             continue
@@ -1230,28 +1360,37 @@ def display_status():
         rsi_val = rsi(list(price_history[sym]))
         imb, _, _ = orderbook_pressure(sym)
         
-        # Best signal
+        # Get best signal
         best_conf = 0
-        for _, func in [
+        best_dir = ""
+        for name, func in [
             ('TF', strategy_trend_following),
             ('MR', strategy_mean_reversion),
             ('SD', strategy_sentiment_divergence),
             ('SM', strategy_smart_money),
             ('BO', strategy_breakout),
+            ('MO', strategy_momentum_only),
         ]:
-            _, conf, _ = func(sym)
+            direction, conf, _ = func(sym)
             if conf > best_conf:
                 best_conf = conf
+                best_dir = direction or ""
         
         arrow = "↑" if mom_dir == 'bullish' else "↓" if mom_dir == 'bearish' else "→"
         
-        # Check if affordable
         is_affordable = any(a['symbol'] == sym for a in affordable)
-        status = "🟢" if best_conf >= MIN_CONFIDENCE and is_affordable else "⏳" if is_affordable else "💸"
         
-        print(f"   {sym}: ${price:,.2f} {arrow} | RSI:{rsi_val:.0f} | OB:{imb:+.0f}% | Conf:{best_conf:.0f}% {status}")
+        if best_conf >= MIN_CONFIDENCE and is_affordable:
+            status = f"🟢 {best_dir}"
+        elif best_conf >= 50:
+            status = f"🟡 {best_dir} ({best_conf}%)"
+        else:
+            status = "⏳"
+        
+        print(f"   {sym}: ${price:,.2f} {arrow} | RSI:{rsi_val:.0f} | OB:{imb:+.0f}% | {status}")
     
     print(f"\n   😰 F&G: {market_sentiment['fear_greed']} | 📈 Trend: {market_sentiment['global_trend']}")
+    print(f"   📱 Telegram: {'Connected' if TELEGRAM_CHAT_ID else 'Waiting for /start'}")
     print("─"*70)
 
 # =============================================================================
@@ -1262,23 +1401,21 @@ def main():
     global running, account_balance
     
     print("\n" + "╔" + "═"*70 + "╗")
-    print("║" + " 💎 ALADDIN WEALTH BUILDER 💎 ".center(70) + "║")
+    print("║" + " 💎 ALADDIN WEALTH BUILDER + TELEGRAM 💎 ".center(70) + "║")
     print("╠" + "═"*70 + "╣")
     print("║" + " ".ljust(70) + "║")
-    print("║" + "   🎯 GOALS:".ljust(70) + "║")
-    print("║" + "      • 100%+ Returns Target".ljust(70) + "║")
-    print("║" + "      • 70-80% Win Rate".ljust(70) + "║")
-    print("║" + "      • <5% Max Drawdown".ljust(70) + "║")
+    print("║" + "   📱 TELEGRAM CONTROL ENABLED".ljust(70) + "║")
+    print("║" + "   Commands: /start /stop /status /trades /settings /kill".ljust(70) + "║")
     print("║" + " ".ljust(70) + "║")
-    print("║" + "   💎 5 WINNING STRATEGIES:".ljust(70) + "║")
-    print("║" + "      1. Trend Following (65% WR)".ljust(70) + "║")
-    print("║" + "      2. Mean Reversion (70% WR)".ljust(70) + "║")
-    print("║" + "      3. Sentiment Divergence (75% WR)".ljust(70) + "║")
-    print("║" + "      4. Smart Money Detection (72% WR)".ljust(70) + "║")
-    print("║" + "      5. Breakout Momentum (60% WR)".ljust(70) + "║")
+    print("║" + "   💎 6 TRADING STRATEGIES:".ljust(70) + "║")
+    print("║" + "      1. Trend Following".ljust(70) + "║")
+    print("║" + "      2. Mean Reversion".ljust(70) + "║")
+    print("║" + "      3. Sentiment Divergence".ljust(70) + "║")
+    print("║" + "      4. Smart Money Detection".ljust(70) + "║")
+    print("║" + "      5. Breakout Momentum".ljust(70) + "║")
+    print("║" + "      6. Pure Momentum".ljust(70) + "║")
     print("║" + " ".ljust(70) + "║")
-    print("║" + "   🛡️ PROTECTION: Breakeven + Trailing Stop".ljust(70) + "║")
-    print("║" + "   🎯 MIN CONFIDENCE: 70% to trade".ljust(70) + "║")
+    print("║" + f"   🎯 MIN CONFIDENCE: {MIN_CONFIDENCE}%".ljust(70) + "║")
     print("╚" + "═"*70 + "╝")
     
     # Get balance
@@ -1287,7 +1424,7 @@ def main():
     if balance > 0:
         print(f"   ✅ Balance: ${balance:.4f}")
     else:
-        print("   ⚠️ Using paper trading mode")
+        print("   ⚠️ Could not fetch balance, using $20 paper mode")
         account_balance = 20.00
         starting_balance = 20.00
         stats['peak_balance'] = 20.00
@@ -1296,8 +1433,14 @@ def main():
     print("\n📊 Analyzing market...")
     update_market_sentiment()
     
+    # Start Telegram thread
+    print("\n📱 Starting Telegram bot...")
+    print("   Send /start to @CryptoDEIbot to connect!")
+    telegram_thread = threading.Thread(target=run_telegram, daemon=True)
+    telegram_thread.start()
+    
     # Start WebSocket
-    print("\n📡 Connecting...")
+    print("\n📡 Connecting to market...")
     ws_thread = threading.Thread(target=run_websocket, daemon=True)
     ws_thread.start()
     
@@ -1305,7 +1448,7 @@ def main():
     
     print("\n" + "═"*70)
     print("💎 WEALTH BUILDER ACTIVE")
-    print("   Scanning for HIGH PROBABILITY setups...")
+    print("   Scanning for setups... (Min confidence: 65%)")
     print("═"*70 + "\n")
     
     last_scan = 0
@@ -1316,15 +1459,12 @@ def main():
         while running:
             now = time.time()
             
-            # Update sentiment
             if now - last_sentiment > 180:
                 update_market_sentiment()
                 last_sentiment = now
             
-            # Manage positions
             manage_positions()
             
-            # Scan for signals - 30+ times per minute (every 2 seconds)
             if now - last_scan >= SCAN_INTERVAL:
                 signal = find_best_signal()
                 if signal:
@@ -1338,14 +1478,13 @@ def main():
                     )
                 last_scan = now
             
-            # Real-time position monitoring
             if positions:
                 display_all_positions()
             elif now - last_status > 15:
                 display_status()
                 last_status = now
             
-            time.sleep(0.1)  # 100ms loop for real-time monitoring
+            time.sleep(0.1)
             
     except KeyboardInterrupt:
         running = False
@@ -1355,28 +1494,21 @@ def main():
     final_balance = account_balance if account_balance > 0 else starting_balance
     roi = (stats['net_pnl'] / max(0.01, starting_balance) * 100)
     
-    print("\n\n" + "╔" + "═"*70 + "╗")
-    print("║" + " 📊 FINAL SUMMARY ".center(70) + "║")
-    print("╠" + "═"*70 + "╣")
-    print("║" + f"   💰 Starting: ${starting_balance:.4f}".ljust(70) + "║")
-    print("║" + f"   💰 Final: ${final_balance + stats['net_pnl']:.4f} ({roi:+.1f}%)".ljust(70) + "║")
-    print("║" + " ".ljust(70) + "║")
-    print("║" + f"   📊 Trades: {stats['trades']}".ljust(70) + "║")
-    print("║" + f"   ✅ Wins: {stats['wins']} | ❌ Losses: {stats['losses']}".ljust(70) + "║")
-    print("║" + f"   🎯 Win Rate: {wr:.1f}%".ljust(70) + "║")
-    print("║" + " ".ljust(70) + "║")
-    print("║" + f"   💵 Gross P&L: ${stats['gross_pnl']:+.4f}".ljust(70) + "║")
-    print("║" + f"   💸 Fees: ${stats['fees_paid']:.4f}".ljust(70) + "║")
-    print("║" + f"   💎 Net P&L: ${stats['net_pnl']:+.4f}".ljust(70) + "║")
-    print("║" + " ".ljust(70) + "║")
+    summary = f"""
+📊 FINAL SUMMARY
+
+💰 Starting: ${starting_balance:.4f}
+💰 Final: ${final_balance + stats['net_pnl']:.4f} ({roi:+.1f}%)
+
+📊 Trades: {stats['trades']}
+✅ Wins: {stats['wins']} | ❌ Losses: {stats['losses']}
+🎯 Win Rate: {wr:.1f}%
+
+💎 Net P&L: ${stats['net_pnl']:+.4f}
+"""
     
-    if stats['strategies']:
-        print("║" + "   📈 Strategy Performance:".ljust(70) + "║")
-        for strat, data in stats['strategies'].items():
-            swr = data['wins'] / max(1, data['trades']) * 100
-            print("║" + f"      • {strat}: {data['trades']}T, {swr:.0f}%WR, ${data['pnl']:+.4f}".ljust(70) + "║")
-    
-    print("╚" + "═"*70 + "╝")
+    print(summary)
+    telegram_send(summary.replace('\n', '\n'))
 
 if __name__ == "__main__":
     main()
