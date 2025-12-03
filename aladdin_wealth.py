@@ -93,9 +93,9 @@ TOTAL_FEE = 0.001   # 0.10% round-trip
 MAX_RISK_PER_TRADE = 0.03    # 3% max per trade
 MAX_DAILY_LOSS = 0.08        # 8% max daily loss
 MAX_DRAWDOWN = 0.05          # 5% max drawdown
-MIN_CONFIDENCE = 55          # Trade at 55%+ confidence (more aggressive for small accounts)
+MIN_CONFIDENCE = 50          # Only trade 50%+ confidence (aggressive but safer than forced)
 MAX_POSITIONS = 2            # Trade up to 2 assets simultaneously
-SCAN_INTERVAL = 1           # Scan every 1 second (60x per minute)
+SCAN_INTERVAL = 2           # Scan every 2 seconds
 
 # Profit Targets (Dynamic based on volatility)
 BASE_TARGET = 0.008          # 0.8% base target
@@ -1328,6 +1328,11 @@ def main():
             if now - last_scan >= SCAN_INTERVAL:
                 signal = find_best_signal()
                 if signal:
+                    # DEBUG: show signal details before opening
+                    print(f"\n[DEBUG] Signal found: {signal['symbol']} {signal['direction']} | Conf:{signal['confidence']:.1f}% | Strat:{signal['strategy']} | Price:${signal['price']:.4f}")
+                    print("[DEBUG] Reasons:")
+                    for r in signal.get('reasons', []):
+                        print(f"  - {r}")
                     open_position(
                         signal['symbol'],
                         signal['direction'],
