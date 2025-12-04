@@ -13,7 +13,20 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 from loguru import logger
-from numba import njit
+
+try:
+    from numba import njit
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
+    # Create a dummy decorator if numba is not available
+    def njit(func=None, **kwargs):
+        if func is not None:
+            return func
+        def decorator(f):
+            return f
+        return decorator
+    logger.warning("Numba not available. Performance may be reduced.")
 
 try:
     import talib

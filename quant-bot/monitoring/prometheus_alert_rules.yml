@@ -1,0 +1,392 @@
+# =============================================================================
+# IV Surface Prometheus Alert Rules
+# =============================================================================
+# Deploy to: /etc/prometheus/rules/iv_surface_alerts.yml
+# Reload Prometheus after deployment
+# =============================================================================
+
+groups:
+  - name: iv_surface_alerts
+    interval: 30s
+    rules:
+      # =========================================================================
+      # IV Surface Shift Alerts
+      # =========================================================================
+      
+      - alert: IVSurfaceShiftCritical
+        expr: abs(iv_surface_shift_zscore) > 3
+        for: 5m
+        labels:
+          severity: critical
+          category: volatility
+        annotations:
+          summary: "Critical IV surface shift detected ({{ $labels.underlying }})"
+          description: "IV surface Z-score is {{ $value | printf \"%.2f\" }}σ, indicating extreme volatility regime change. Immediate review required."
+          runbook_url: "https://wiki.internal/runbooks/iv-surface-shift"
+          action: "Consider reducing directional vol positions and rebalancing Greeks"
+      
+      - alert: IVSurfaceShiftWarning
+        expr: abs(iv_surface_shift_zscore) > 2
+        for: 15m
+        labels:
+          severity: warning
+          category: volatility
+        annotations:
+          summary: "Elevated IV surface shift ({{ $labels.underlying }})"
+          description: "IV surface Z-score is {{ $value | printf \"%.2f\" }}σ. Monitor for continued movement."
+      
+      # =========================================================================
+      # ATM IV Change Alerts
+      # =========================================================================
+      
+      - alert: ATMIVSpikeUp
+        expr: delta(iv_surface_atm_iv[1h]) * 100 > 10
+        for: 5m
+        labels:
+          severity: warning
+          category: volatility
+          direction: up
+        annotations:
+          summary: "ATM IV spiking up ({{ $labels.underlying }})"
+          description: "ATM IV increased by {{ $value | printf \"%.1f\" }}% in the last hour. Check for news/events."
+      
+      - alert: ATMIVCrash
+        expr: delta(iv_surface_atm_iv[1h]) * 100 < -10
+        for: 5m
+        labels:
+          severity: warning
+          category: volatility
+          direction: down
+        annotations:
+          summary: "ATM IV crash detected ({{ $labels.underlying }})"
+          description: "ATM IV dropped by {{ $value | printf \"%.1f\" }}% in the last hour. Review long vol positions."
+          action: "Consider closing directional vol positions if IV continues to decline"
+      
+      - alert: ATMIVExtreme
+        expr: iv_surface_atm_iv * 100 > 120
+        for: 10m
+        labels:
+          severity: critical
+          category: volatility
+        annotations:
+          summary: "Extreme ATM IV level ({{ $labels.underlying }})"
+          description: "ATM IV is {{ $value | printf \"%.1f\" }}%, which is extremely elevated. Reduce options exposure."
+      
+      # =========================================================================
+      # IV vs Realized Vol Alerts
+      # =========================================================================
+      
+      - alert: IVRealizedSpreadWide
+        expr: (iv_surface_atm_iv - iv_surface_realized_vol) * 100 > 20
+        for: 30m
+        labels:
+          severity: info
+          category: volatility
+        annotations:
+          summary: "IV premium over realized is high ({{ $labels.underlying }})"
+          description: "IV is {{ $value | printf \"%.1f\" }}% above realized vol. Consider selling vol."
+      
+      - alert: IVRealizedSpreadNegative
+        expr: (iv_surface_atm_iv - iv_surface_realized_vol) * 100 < -5
+        for: 30m
+        labels:
+          severity: warning
+          category: volatility
+        annotations:
+          summary: "IV below realized vol ({{ $labels.underlying }})"
+          description: "IV is trading {{ $value | printf \"%.1f\" }}% below realized. Unusual - check for data issues or consider buying vol."
+      
+      # =========================================================================
+      # Skew Alerts
+      # =========================================================================
+      
+      - alert: SkewExtreme
+        expr: abs(iv_surface_25d_put_iv - iv_surface_25d_call_iv) * 100 > 15
+        for: 15m
+        labels:
+          severity: warning
+          category: skew
+        annotations:
+          summary: "Extreme skew detected ({{ $labels.underlying }})"
+          description: "25D risk reversal is {{ $value | printf \"%.1f\" }}%. Market showing strong directional bias."
+      
+      - alert: SkewInversion
+        expr: (iv_surface_25d_put_iv - iv_surface_25d_call_iv) * 100 < -5
+        for: 30m
+        labels:
+          severity: info
+          category: skew
+        annotations:
+          summary: "Skew inversion - calls > puts ({{ $labels.underlying }})"
+          description: "Calls trading {{ $value | printf \"%.1f\" }}% higher than puts. Unusual bullish positioning."
+      
+      # =========================================================================
+      # Term Structure Alerts
+      # =========================================================================
+      
+      - alert: TermStructureInversion
+        expr: iv_surface_term_structure_slope{tenor="7d"} < iv_surface_term_structure_slope{tenor="30d"} * 0.8
+        for: 30m
+        labels:
+          severity: warning
+          category: term_structure
+        annotations:
+          summary: "Term structure inversion ({{ $labels.underlying }})"
+          description: "Short-dated IV significantly below long-dated. Market expects near-term calm."
+      
+      - alert: TermStructureSteepening
+        expr: delta(iv_surface_term_structure_slope{tenor="7d"}[4h]) * 100 > 10
+        for: 15m
+        labels:
+          severity: info
+          category: term_structure
+        annotations:
+          summary: "Term structure steepening rapidly ({{ $labels.underlying }})"
+          description: "Near-term vol increasing faster than long-term. Expect near-term volatility event."
+      
+      # =========================================================================
+      # Data Quality Alerts
+      # =========================================================================
+      
+      - alert: IVSurfaceStale
+        expr: time() - iv_surface_last_update_timestamp > 300
+        for: 5m
+        labels:
+          severity: critical
+          category: data_quality
+        annotations:
+          summary: "IV surface data stale ({{ $labels.underlying }})"
+          description: "IV surface has not updated in {{ $value | humanizeDuration }}. Check data feed."
+      
+      - alert: IVSurfaceDataGap
+        expr: count(iv_surface_strike_iv{underlying="BTCUSD"}) < 5
+        for: 10m
+        labels:
+          severity: warning
+          category: data_quality
+        annotations:
+          summary: "IV surface has insufficient strikes"
+          description: "Only {{ $value }} strikes available for surface construction. Quality degraded."
+
+  # ===========================================================================
+  # Net Vega Drift Alerts
+  # ===========================================================================
+  
+  - name: greeks_alerts
+    interval: 30s
+    rules:
+      - alert: NetVegaDriftHigh
+        expr: abs(options_net_vega) > 5000
+        for: 15m
+        labels:
+          severity: warning
+          category: greeks
+        annotations:
+          summary: "Net Vega exposure elevated"
+          description: "Net Vega is {{ $value | printf \"$%.0f\" }}. Consider reducing options exposure."
+      
+      - alert: NetVegaDriftCritical
+        expr: abs(options_net_vega) > 10000
+        for: 5m
+        labels:
+          severity: critical
+          category: greeks
+        annotations:
+          summary: "Net Vega exposure critical"
+          description: "Net Vega is {{ $value | printf \"$%.0f\" }}. Immediate position reduction required."
+          action: "Execute vega-reducing trades or close positions"
+      
+      - alert: GammaBleedExcessive
+        expr: options_gamma_bleed_hourly > 100
+        for: 1h
+        labels:
+          severity: warning
+          category: greeks
+        annotations:
+          summary: "Excessive gamma bleed"
+          description: "Gamma bleed is {{ $value | printf \"$%.0f\" }}/hour. Hedging costs may exceed Optuna recommendation."
+
+  # ===========================================================================
+  # Funding Arbitrage Alerts
+  # ===========================================================================
+  
+  - name: funding_arb_alerts
+    interval: 30s
+    rules:
+      - alert: FundingCaptureDegraded
+        expr: funding_arb_realized_capture_bps / funding_arb_expected_capture_bps < 0.7
+        for: 30m
+        labels:
+          severity: warning
+          category: arbitrage
+        annotations:
+          summary: "Funding arbitrage capture degraded"
+          description: "Realized capture is {{ $value | printf \"%.0f%%\" }} of expected. Consider throttling size."
+      
+      - alert: FundingArbSlippageHigh
+        expr: rate(funding_arb_scaler_slippage_bps_sum[30m]) / rate(funding_arb_scaler_slippage_bps_count[30m]) > 10
+        for: 15m
+        labels:
+          severity: warning
+          category: arbitrage
+        annotations:
+          summary: "Funding arb slippage elevated"
+          description: "Average slippage is {{ $value | printf \"%.1f\" }} bps over 30m. Auto-scaler may throttle."
+      
+      - alert: FundingArbThrottled
+        expr: funding_arb_scaler_mode == 1
+        for: 5m
+        labels:
+          severity: info
+          category: arbitrage
+        annotations:
+          summary: "Funding arb auto-scaler in conservative mode"
+          description: "Auto-scaler throttled due to slippage. Capacity reduced."
+
+  # ===========================================================================
+  # Cross-Exchange Fill Ratio Alerts
+  # ===========================================================================
+  
+  - name: cross_exchange_alerts
+    interval: 30s
+    rules:
+      - alert: CrossExchangeFillRatioLow
+        expr: sum(rate(cross_exchange_fills_total{status="filled"}[30m])) / sum(rate(cross_exchange_fills_total[30m])) < 0.90
+        for: 30m
+        labels:
+          severity: warning
+          category: execution
+        annotations:
+          summary: "Cross-exchange fill ratio below 90%"
+          description: "Fill ratio is {{ $value | printf \"%.1f%%\" }}. Consider switching to conservative routing."
+          action: "Review execution routes and consider failover to backup venues"
+      
+      - alert: CrossExchangeFillRatioCritical
+        expr: sum(rate(cross_exchange_fills_total{status="filled"}[15m])) / sum(rate(cross_exchange_fills_total[15m])) < 0.80
+        for: 15m
+        labels:
+          severity: critical
+          category: execution
+        annotations:
+          summary: "Cross-exchange fill ratio critically low"
+          description: "Fill ratio dropped to {{ $value | printf \"%.1f%%\" }}. Execution quality severely degraded."
+      
+      - alert: CrossExchangeLatencyHigh
+        expr: histogram_quantile(0.99, rate(cross_exchange_latency_seconds_bucket[10m])) > 2
+        for: 10m
+        labels:
+          severity: warning
+          category: execution
+        annotations:
+          summary: "Cross-exchange P99 latency high"
+          description: "P99 latency is {{ $value | printf \"%.1f\" }}s. Arb profitability may be impacted."
+
+  # ===========================================================================
+  # Expiry Automation Alerts
+  # ===========================================================================
+  
+  - name: expiry_alerts
+    interval: 1m
+    rules:
+      - alert: ExpiryWarning24h
+        expr: options_position_dte <= 1 and options_position_dte > 0.167
+        for: 5m
+        labels:
+          severity: info
+          category: expiry
+        annotations:
+          summary: "Options position expiring within 24h"
+          description: "Position {{ $labels.symbol }} expires in {{ $value | printf \"%.1f\" }} days. Auto-close scheduled."
+      
+      - alert: ExpiryWarning4h
+        expr: options_position_dte <= 0.167 and options_position_dte > 0
+        for: 1m
+        labels:
+          severity: warning
+          category: expiry
+        annotations:
+          summary: "Options position expiring within 4h"
+          description: "Position {{ $labels.symbol }} expires in {{ $value | printf \"%.2f\" }} days. Auto-close imminent."
+      
+      - alert: ExpiryAutoCloseTriggered
+        expr: increase(expiry_handler_auto_close_total[5m]) > 0
+        labels:
+          severity: info
+          category: expiry
+        annotations:
+          summary: "Expiry auto-close executed"
+          description: "{{ $value }} positions auto-closed due to expiry handler."
+      
+      - alert: ExpiryAutoCloseFailed
+        expr: increase(expiry_handler_auto_close_errors_total[5m]) > 0
+        labels:
+          severity: critical
+          category: expiry
+        annotations:
+          summary: "Expiry auto-close FAILED"
+          description: "{{ $value }} positions failed to auto-close. Manual intervention required!"
+          action: "Check position status and close manually if needed"
+
+  # ===========================================================================
+  # Hedging Daemon Alerts  
+  # ===========================================================================
+  
+  - name: hedging_daemon_alerts
+    interval: 30s
+    rules:
+      - alert: HedgingDaemonDown
+        expr: hedging_daemon_status == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: hedging
+        annotations:
+          summary: "Hedging daemon is down"
+          description: "Hedging daemon not running. Portfolio may drift from delta neutral."
+      
+      - alert: HedgingSlippageSpike
+        expr: rate(hedging_daemon_slippage_bps_sum[10m]) / rate(hedging_daemon_slippage_bps_count[10m]) > 15
+        for: 10m
+        labels:
+          severity: warning
+          category: hedging
+        annotations:
+          summary: "Hedging slippage elevated"
+          description: "Average hedge slippage is {{ $value | printf \"%.1f\" }} bps. Rollback may trigger."
+      
+      - alert: HedgingRollbackTriggered
+        expr: increase(hedging_daemon_rollbacks_total[10m]) > 0
+        labels:
+          severity: warning
+          category: hedging
+        annotations:
+          summary: "Hedging daemon triggered rollback"
+          description: "Rollback triggered due to consecutive high slippage. Mode switched to conservative."
+
+  # ===========================================================================
+  # Regression Suite Alerts (for nightly CI)
+  # ===========================================================================
+  
+  - name: regression_alerts
+    interval: 5m
+    rules:
+      - alert: RegressionSuiteFailed
+        expr: regression_suite_status == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: ci
+        annotations:
+          summary: "Nightly regression suite FAILED"
+          description: "E2E regression detected P&L deviation outside tolerance. Review report immediately."
+          action: "Check reports/regression/ for detailed analysis"
+      
+      - alert: RegressionSuiteWarning
+        expr: regression_suite_warnings > 0
+        for: 1m
+        labels:
+          severity: warning
+          category: ci
+        annotations:
+          summary: "Regression suite has warnings"
+          description: "{{ $value }} strategies produced warnings. Review for potential issues."

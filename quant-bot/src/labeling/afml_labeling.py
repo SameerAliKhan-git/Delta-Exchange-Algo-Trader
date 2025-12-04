@@ -12,8 +12,20 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
-from numba import njit
 from loguru import logger
+
+try:
+    from numba import njit
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
+    # Create a dummy decorator if numba is not available
+    def njit(func=None, **kwargs):
+        if func is not None:
+            return func
+        def decorator(f):
+            return f
+        return decorator
 
 
 @dataclass
@@ -340,26 +352,33 @@ def compute_sample_weights(
     t1 = exit_times.dropna()
     
     # Count number of labels active at each timestamp
-    concurrent = pd.Series(0, index=close.index)
+    concurrent = pd.Series(0.0, index=close.index)
     
     for start_idx, end_idx in zip(t1.index, t1.values):
-        # Get actual datetime indices
-        start_loc = close.index.get_loc(start_idx)
-        end_loc = int(end_idx) if end_idx < len(close) else len(close) - 1
-        
-        # Mark concurrent period
-        concurrent.iloc[start_loc:end_loc + 1] += 1
+        try:
+            # Get actual datetime indices
+            start_loc = close.index.get_loc(start_idx)
+            end_loc = int(end_idx) if end_idx < len(close) else len(close) - 1
+            
+            # Mark concurrent period using a loop to avoid slice assignment issues
+            for i in range(start_loc, min(end_loc + 1, len(concurrent))):
+                concurrent.iloc[i] += 1
+        except (KeyError, IndexError):
+            continue
     
     # Compute average uniqueness for each sample
     weights = pd.Series(index=labels.index, dtype=float)
     
     for start_idx, end_idx in zip(t1.index, t1.values):
-        start_loc = close.index.get_loc(start_idx)
-        end_loc = int(end_idx) if end_idx < len(close) else len(close) - 1
-        
-        # Average uniqueness = 1 / average concurrent labels
-        avg_concurrent = concurrent.iloc[start_loc:end_loc + 1].mean()
-        weights[start_idx] = 1.0 / avg_concurrent if avg_concurrent > 0 else 0
+        try:
+            start_loc = close.index.get_loc(start_idx)
+            end_loc = int(end_idx) if end_idx < len(close) else len(close) - 1
+            
+            # Average uniqueness = 1 / average concurrent labels
+            avg_concurrent = concurrent.iloc[start_loc:min(end_loc + 1, len(concurrent))].mean()
+            weights[start_idx] = 1.0 / avg_concurrent if avg_concurrent > 0 else 0
+        except (KeyError, IndexError):
+            weights[start_idx] = 0
     
     # Apply time decay
     if decay < 1.0:

@@ -1,0 +1,348 @@
+name: Trading Alert Response
+
+on:
+  repository_dispatch:
+    types: [trading-alert]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to take'
+        required: true
+        type: choice
+        options:
+          - rollback
+          - kill-switch
+          - canary-rollback
+          - status
+      reason:
+        description: 'Reason for action'
+        required: true
+        default: 'Manual trigger'
+      target_version:
+        description: 'Target model version (for rollback)'
+        required: false
+
+env:
+  PYTHON_VERSION: '3.10'
+  TRADING_SERVICE_URL: ${{ secrets.TRADING_SERVICE_URL }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+jobs:
+  # ============================================================
+  # Process Alert
+  # ============================================================
+  process-alert:
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.determine-action.outputs.action }}
+      severity: ${{ steps.determine-action.outputs.severity }}
+    
+    steps:
+      - name: Determine Action
+        id: determine-action
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "action=${{ github.event.client_payload.action }}" >> $GITHUB_OUTPUT
+            echo "severity=${{ github.event.client_payload.severity }}" >> $GITHUB_OUTPUT
+          else
+            echo "action=${{ github.event.inputs.action }}" >> $GITHUB_OUTPUT
+            echo "severity=manual" >> $GITHUB_OUTPUT
+          fi
+
+  # ============================================================
+  # Kill Switch Activation
+  # ============================================================
+  activate-kill-switch:
+    needs: process-alert
+    if: needs.process-alert.outputs.action == 'kill-switch'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Dependencies
+        run: |
+          pip install requests
+      
+      - name: Activate Kill Switch
+        run: |
+          python -c "
+          import requests
+          import json
+          from datetime import datetime
+          
+          # Try API endpoint first
+          try:
+              response = requests.post(
+                  '${{ env.TRADING_SERVICE_URL }}/api/v1/kill-switch',
+                  json={
+                      'action': 'activate',
+                      'reason': '${{ github.event.inputs.reason || github.event.client_payload.reason }}',
+                      'triggered_by': 'github_actions',
+                      'timestamp': datetime.now().isoformat()
+                  },
+                  timeout=30
+              )
+              print(f'API Response: {response.status_code}')
+          except Exception as e:
+              print(f'API call failed: {e}')
+          
+          # Notify
+          notification = {
+              'text': ':rotating_light: *KILL SWITCH ACTIVATED* :rotating_light:\n\n' + 
+                      f'Reason: ${{ github.event.inputs.reason || github.event.client_payload.reason }}\n' +
+                      f'Triggered by: GitHub Actions\n' +
+                      f'Workflow: {\"${{ github.workflow }}\"}'
+          }
+          
+          if '${{ env.SLACK_WEBHOOK_URL }}':
+              requests.post('${{ env.SLACK_WEBHOOK_URL }}', json=notification)
+          "
+      
+      - name: Create Kill Switch File
+        run: |
+          echo '{"activated_at": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "reason": "${{ github.event.inputs.reason || github.event.client_payload.reason }}", "triggered_by": "github_actions"}' > KILL_SWITCH
+      
+      - name: Upload Kill Switch Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kill-switch
+          path: KILL_SWITCH
+
+  # ============================================================
+  # Automated Rollback
+  # ============================================================
+  rollback:
+    needs: process-alert
+    if: needs.process-alert.outputs.action == 'rollback'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Execute Rollback
+        run: |
+          python src/ops/rollback.py \
+            --reason "${{ github.event.inputs.reason || github.event.client_payload.reason }}" \
+            ${{ github.event.inputs.target_version && format('--target-version {0}', github.event.inputs.target_version) || '' }}
+      
+      - name: Notify Rollback Complete
+        run: |
+          python -c "
+          import requests
+          
+          notification = {
+              'text': ':rewind: *ROLLBACK COMPLETED*\n\n' +
+                      f'Reason: ${{ github.event.inputs.reason || github.event.client_payload.reason }}\n' +
+                      f'Target Version: ${{ github.event.inputs.target_version || \"last_good\" }}\n' +
+                      'Actions taken:\n' +
+                      '• Trading stopped\n' +
+                      '• Kill switch activated\n' +
+                      '• Model rolled back\n' +
+                      '• Online learning frozen\n' +
+                      '• Position sizes reduced'
+          }
+          
+          if '${{ env.SLACK_WEBHOOK_URL }}':
+              requests.post('${{ env.SLACK_WEBHOOK_URL }}', json=notification)
+          "
+
+  # ============================================================
+  # Canary Rollback
+  # ============================================================
+  canary-rollback:
+    needs: process-alert
+    if: needs.process-alert.outputs.action == 'canary-rollback'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Rollback Canary
+        run: |
+          python -c "
+          import asyncio
+          import sys
+          sys.path.insert(0, '.')
+          
+          from src.ops.canary_orchestrator import CanaryOrchestrator
+          
+          async def main():
+              orchestrator = CanaryOrchestrator()
+              await orchestrator.rollback('${{ github.event.inputs.reason || github.event.client_payload.reason }}')
+          
+          asyncio.run(main())
+          "
+      
+      - name: Notify Canary Rollback
+        run: |
+          python -c "
+          import requests
+          
+          notification = {
+              'text': ':warning: *CANARY DEPLOYMENT ROLLED BACK*\n\n' +
+                      f'Reason: ${{ github.event.inputs.reason || github.event.client_payload.reason }}\n' +
+                      'Returning to shadow mode.'
+          }
+          
+          if '${{ env.SLACK_WEBHOOK_URL }}':
+              requests.post('${{ env.SLACK_WEBHOOK_URL }}', json=notification)
+          "
+
+  # ============================================================
+  # Status Check
+  # ============================================================
+  status:
+    needs: process-alert
+    if: needs.process-alert.outputs.action == 'status'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Get Status
+        id: status
+        run: |
+          python -c "
+          import json
+          import sys
+          sys.path.insert(0, '.')
+          
+          # Check rollback status
+          from src.ops.rollback import RollbackConfig
+          from pathlib import Path
+          
+          kill_switch = Path(RollbackConfig.KILL_SWITCH_FILE).exists()
+          
+          # Check canary status
+          try:
+              from src.ops.canary_orchestrator import CanaryOrchestrator
+              orchestrator = CanaryOrchestrator()
+              canary_stage = orchestrator.current_stage.value
+          except:
+              canary_stage = 'unknown'
+          
+          status = {
+              'kill_switch_active': kill_switch,
+              'canary_stage': canary_stage
+          }
+          
+          print(f'::set-output name=status::{json.dumps(status)}')
+          print(f'Kill Switch: {\"ACTIVE\" if kill_switch else \"OFF\"}')
+          print(f'Canary Stage: {canary_stage}')
+          "
+      
+      - name: Report Status
+        run: |
+          echo "System Status:"
+          echo "${{ steps.status.outputs.status }}"
+
+  # ============================================================
+  # Create Incident Ticket
+  # ============================================================
+  create-incident:
+    needs: [process-alert, activate-kill-switch, rollback]
+    if: always() && (needs.activate-kill-switch.result == 'success' || needs.rollback.result == 'success')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Create GitHub Issue
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[INCIDENT] Trading Alert - ${new Date().toISOString().split('T')[0]}`,
+              body: `## Trading Incident Report
+              
+              **Time:** ${new Date().toISOString()}
+              **Action Taken:** ${{ needs.process-alert.outputs.action }}
+              **Severity:** ${{ needs.process-alert.outputs.severity }}
+              **Reason:** ${{ github.event.inputs.reason || github.event.client_payload.reason }}
+              
+              ## Checklist
+              
+              - [ ] Root cause identified
+              - [ ] Logs collected
+              - [ ] Fix implemented
+              - [ ] Fix tested in shadow mode
+              - [ ] Ready to resume trading
+              
+              ## Timeline
+              
+              | Time | Event |
+              |------|-------|
+              | ${new Date().toISOString()} | Incident triggered |
+              | | |
+              
+              ## Root Cause
+              
+              _To be filled in during investigation_
+              
+              ## Resolution
+              
+              _To be filled in after resolution_
+              `,
+              labels: ['incident', 'trading', 'urgent']
+            });
+            
+            console.log(`Created issue #${issue.data.number}`);
+
+# ============================================================
+# Webhook Handler Configuration
+# ============================================================
+# To trigger this workflow from Prometheus alerts, configure your
+# alertmanager to POST to:
+# https://api.github.com/repos/{owner}/{repo}/dispatches
+# 
+# Headers:
+#   Authorization: token $GITHUB_TOKEN
+#   Accept: application/vnd.github.v3+json
+#
+# Body:
+# {
+#   "event_type": "trading-alert",
+#   "client_payload": {
+#     "action": "rollback",
+#     "severity": "critical",
+#     "reason": "Alert description here"
+#   }
+# }

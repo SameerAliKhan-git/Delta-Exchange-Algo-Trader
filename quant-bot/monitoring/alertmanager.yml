@@ -1,0 +1,182 @@
+# =============================================================================
+# ALERTMANAGER CONFIGURATION
+# =============================================================================
+# Routes alerts from Prometheus to Slack, PagerDuty, Email
+# 
+# Replace placeholders:
+#   - YOUR_SLACK_WEBHOOK_URL
+#   - YOUR_PAGERDUTY_SERVICE_KEY
+#   - YOUR_EMAIL
+# =============================================================================
+
+global:
+  # Global configuration
+  resolve_timeout: 5m
+  
+  # Slack defaults
+  slack_api_url: 'YOUR_SLACK_WEBHOOK_URL'
+  
+  # SMTP for email alerts
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'quant-bot-alerts@yourcompany.com'
+  smtp_auth_username: 'YOUR_EMAIL'
+  smtp_auth_password: 'YOUR_APP_PASSWORD'
+
+# =============================================================================
+# TEMPLATES
+# =============================================================================
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# =============================================================================
+# ROUTE CONFIGURATION
+# =============================================================================
+route:
+  # Default receiver
+  receiver: 'slack-notifications'
+  
+  # Group alerts by these labels
+  group_by: ['alertname', 'severity', 'strategy']
+  
+  # Wait before sending first notification
+  group_wait: 30s
+  
+  # Wait before sending updates
+  group_interval: 5m
+  
+  # Wait before resending
+  repeat_interval: 4h
+  
+  # Child routes for different severities
+  routes:
+    # Critical alerts -> PagerDuty + Slack
+    - match:
+        severity: critical
+      receiver: 'pagerduty-critical'
+      continue: true
+      group_wait: 10s
+      repeat_interval: 1h
+    
+    # Critical also to Slack
+    - match:
+        severity: critical
+      receiver: 'slack-critical'
+      group_wait: 10s
+    
+    # Warning alerts -> Slack only
+    - match:
+        severity: warning
+      receiver: 'slack-warnings'
+      group_wait: 1m
+      repeat_interval: 4h
+    
+    # Info/daily reports
+    - match:
+        severity: info
+      receiver: 'slack-notifications'
+      group_wait: 5m
+      repeat_interval: 24h
+
+# =============================================================================
+# RECEIVERS
+# =============================================================================
+receivers:
+  # ---------------------------------------------------------------------------
+  # SLACK - General Notifications
+  # ---------------------------------------------------------------------------
+  - name: 'slack-notifications'
+    slack_configs:
+      - channel: '#trading-alerts'
+        send_resolved: true
+        icon_emoji: ':chart_with_upwards_trend:'
+        title: '{{ .Status | toUpper }}: {{ .CommonAnnotations.summary }}'
+        text: >-
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Started:* {{ .StartsAt.Format "2006-01-02 15:04:05" }}
+          {{ end }}
+
+  # ---------------------------------------------------------------------------
+  # SLACK - Critical Alerts
+  # ---------------------------------------------------------------------------
+  - name: 'slack-critical'
+    slack_configs:
+      - channel: '#trading-critical'
+        send_resolved: true
+        icon_emoji: ':rotating_light:'
+        color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+        title: ':rotating_light: CRITICAL: {{ .CommonAnnotations.summary }}'
+        text: >-
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Strategy:* {{ .Labels.strategy }}
+          *Value:* {{ .Annotations.value }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        actions:
+          - type: button
+            text: 'View in Grafana'
+            url: 'http://localhost:3000/d/trading-dashboard'
+          - type: button
+            text: 'Silence Alert'
+            url: 'http://localhost:9093/#/silences/new'
+
+  # ---------------------------------------------------------------------------
+  # SLACK - Warnings
+  # ---------------------------------------------------------------------------
+  - name: 'slack-warnings'
+    slack_configs:
+      - channel: '#trading-alerts'
+        send_resolved: true
+        icon_emoji: ':warning:'
+        color: 'warning'
+        title: ':warning: Warning: {{ .CommonAnnotations.summary }}'
+        text: >-
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          {{ end }}
+
+  # ---------------------------------------------------------------------------
+  # PAGERDUTY - Critical
+  # ---------------------------------------------------------------------------
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - service_key: 'YOUR_PAGERDUTY_SERVICE_KEY'
+        send_resolved: true
+        description: '{{ .CommonAnnotations.summary }}'
+        severity: critical
+        details:
+          firing: '{{ .Alerts.Firing | len }}'
+          resolved: '{{ .Alerts.Resolved | len }}'
+          alerts: '{{ range .Alerts }}{{ .Annotations.description }} {{ end }}'
+
+  # ---------------------------------------------------------------------------
+  # EMAIL - Fallback
+  # ---------------------------------------------------------------------------
+  - name: 'email-fallback'
+    email_configs:
+      - to: 'ops@yourcompany.com'
+        send_resolved: true
+        headers:
+          Subject: '[QUANT-BOT] {{ .Status | toUpper }}: {{ .CommonAnnotations.summary }}'
+
+# =============================================================================
+# INHIBITION RULES
+# =============================================================================
+# Suppress lower severity alerts when higher severity fires
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'strategy']
+  
+  - source_match:
+      severity: 'warning'
+    target_match:
+      severity: 'info'
+    equal: ['alertname', 'strategy']

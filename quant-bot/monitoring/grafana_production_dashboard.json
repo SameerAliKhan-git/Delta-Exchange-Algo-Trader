@@ -1,0 +1,646 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Production Trading Dashboard - Real-time monitoring of all critical metrics",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "panels": [],
+      "title": "🎯 Key Performance Indicators",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0 },
+              { "color": "green", "value": 1000 }
+            ]
+          },
+          "unit": "currencyUSD"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "title": "Net P&L (Today)",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "increase(strategy_net_pnl_total[24h])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.10 }
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "title": "Current Drawdown",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "trading_max_drawdown_pct",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 1.0 }
+            ]
+          },
+          "unit": "none"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "area" },
+      "title": "Sharpe (30d Rolling)",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "trading_sharpe_ratio_30d",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.4 },
+              { "color": "green", "value": 0.5 }
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "id": 5,
+      "title": "Win Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "trading_win_rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.85 },
+              { "color": "green", "value": 0.95 }
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "id": 6,
+      "title": "Fill Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "trading_orders_filled / trading_orders_placed",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "id": 7,
+      "title": "Kill Switch Status",
+      "type": "stat",
+      "options": {
+        "colorMode": "background",
+        "textMode": "name"
+      },
+      "targets": [
+        {
+          "expr": "trading_kill_switch_active",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 10,
+      "title": "📈 P&L & Equity Curve",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": true,
+            "axisLabel": "P&L ($)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "unit": "currencyUSD"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 11,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "title": "Cumulative P&L",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "strategy_net_pnl_total",
+          "legendFormat": "Net P&L",
+          "refId": "A"
+        },
+        {
+          "expr": "strategy_gross_pnl_total",
+          "legendFormat": "Gross P&L",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 80 },
+          "unit": "currencyUSD"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 12,
+      "title": "Hourly P&L",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "increase(strategy_net_pnl_total[1h])",
+          "legendFormat": "Hourly P&L",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "id": 20,
+      "title": "⚡ Execution Quality",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "lineWidth": 2 },
+          "unit": "none"
+        }
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 15 },
+      "id": 21,
+      "title": "Slippage (bps) - Realized vs Simulated",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "avg_over_time(slippage_realized_bps[5m])",
+          "legendFormat": "Realized",
+          "refId": "A"
+        },
+        {
+          "expr": "avg_over_time(slippage_simulated_bps[5m])",
+          "legendFormat": "Simulated",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line" },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 15 },
+      "id": 22,
+      "title": "Fill Latency (ms)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(fill_latency_ms_bucket[5m]))",
+          "legendFormat": "P50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(fill_latency_ms_bucket[5m]))",
+          "legendFormat": "P95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(fill_latency_ms_bucket[5m]))",
+          "legendFormat": "P99",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "bars" },
+          "unit": "none"
+        }
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 15 },
+      "id": 23,
+      "title": "Market Impact (bps)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "avg_over_time(market_impact_realized_bps[5m])",
+          "legendFormat": "Realized Impact",
+          "refId": "A"
+        },
+        {
+          "expr": "avg_over_time(market_impact_estimated_bps[5m])",
+          "legendFormat": "Estimated Impact",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "id": 30,
+      "title": "🚦 Gates & Risk Controls",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 22 },
+      "id": 31,
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "title": "Order-Flow Gate Pass Rate",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "1 - (rate(orderflow_gate_blocked_total[1h]) / rate(orderflow_gate_evaluated_total[1h]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit" }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 22 },
+      "id": 32,
+      "title": "Regime Gate Pass Rate",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "1 - (rate(regime_gate_blocked_total[1h]) / rate(regime_gate_evaluated_total[1h]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "TRENDING" } }, "type": "value" },
+            { "options": { "1": { "text": "MEAN_REV" } }, "type": "value" },
+            { "options": { "2": { "text": "VOLATILE" } }, "type": "value" },
+            { "options": { "3": { "text": "CRISIS" } }, "type": "value" }
+          ]
+        }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 22 },
+      "id": 33,
+      "title": "Current Regime",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "regime_current",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "none" }
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 22 },
+      "id": 34,
+      "title": "Circuit Breaker Triggers (24h)",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "increase(circuit_breaker_triggers_total[24h])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "id": 40,
+      "title": "🤖 Model Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 29 },
+      "id": 41,
+      "title": "Model Precision (Meta-Labeler)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "model_meta_precision",
+          "legendFormat": "Current Precision",
+          "refId": "A"
+        },
+        {
+          "expr": "model_meta_precision_baseline",
+          "legendFormat": "Baseline",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 29 },
+      "id": 42,
+      "title": "Feature Drift (PSI)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "model_feature_psi",
+          "legendFormat": "{{ feature }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 29 },
+      "id": 43,
+      "title": "Online Learning Updates",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "increase(model_updates_total[1h])",
+          "legendFormat": "Updates/hour",
+          "refId": "A"
+        },
+        {
+          "expr": "increase(model_updates_rejected_total[1h])",
+          "legendFormat": "Rejected/hour",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "id": 50,
+      "title": "📊 Trade Activity",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 36 },
+      "id": 51,
+      "title": "Trades per Hour",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "increase(trading_trades_total[1h])",
+          "legendFormat": "Trades",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 36 },
+      "id": 52,
+      "title": "Position Sizes ($)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "trading_position_size_usd",
+          "legendFormat": "{{ symbol }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 36 },
+      "id": 53,
+      "title": "Turnover (% AUM/day)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "trading_daily_turnover_pct",
+          "legendFormat": "Turnover",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "id": 60,
+      "title": "🏗️ Infrastructure",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 43 },
+      "id": 61,
+      "title": "API Rate Limit Remaining",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "api_rate_limit_remaining",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 43 },
+      "id": 62,
+      "title": "WebSocket Connection Status",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "websocket_connected",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 43 },
+      "id": 63,
+      "title": "Memory Usage (MB)",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes / 1024 / 1024",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 43 },
+      "id": 64,
+      "title": "CPU Usage (%)",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "rate(process_cpu_seconds_total[1m]) * 100",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["trading", "production", "quant"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "hide": 0,
+        "includeAll": true,
+        "label": "Strategy",
+        "multi": true,
+        "name": "strategy",
+        "options": [],
+        "query": "label_values(strategy_net_pnl_total, strategy)",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "hide": 0,
+        "includeAll": true,
+        "label": "Symbol",
+        "multi": true,
+        "name": "symbol",
+        "options": [],
+        "query": "label_values(trading_position_size_usd, symbol)",
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "Production Trading Dashboard",
+  "uid": "quant-prod-trading",
+  "version": 1,
+  "weekStart": ""
+}

@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 # Load environment variables first
 load_dotenv()
 
-from config import get_config, ensure_directories
+from app_config import get_config, ensure_directories
 from logger import setup_logging, get_logger, get_audit_logger
 from delta_client import get_delta_client
 from data_ingest import get_data_ingestor

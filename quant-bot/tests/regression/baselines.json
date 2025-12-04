@@ -1,0 +1,44 @@
+{
+  "momentum": {
+    "pnl_per_day": 50.0,
+    "trades_per_day": 5.0,
+    "win_rate": 0.55,
+    "max_drawdown_pct": 5.0,
+    "sharpe_ratio": 1.2
+  },
+  "mean_reversion": {
+    "pnl_per_day": 40.0,
+    "trades_per_day": 8.0,
+    "win_rate": 0.60,
+    "max_drawdown_pct": 4.0,
+    "sharpe_ratio": 1.5
+  },
+  "orderflow": {
+    "pnl_per_day": 30.0,
+    "trades_per_day": 15.0,
+    "win_rate": 0.52,
+    "max_drawdown_pct": 6.0,
+    "sharpe_ratio": 1.0
+  },
+  "sentiment": {
+    "pnl_per_day": 25.0,
+    "trades_per_day": 3.0,
+    "win_rate": 0.58,
+    "max_drawdown_pct": 7.0,
+    "sharpe_ratio": 0.9
+  },
+  "options_delta_neutral": {
+    "pnl_per_day": 60.0,
+    "trades_per_day": 4.0,
+    "win_rate": 0.65,
+    "max_drawdown_pct": 8.0,
+    "sharpe_ratio": 1.8
+  },
+  "funding_arbitrage": {
+    "pnl_per_day": 35.0,
+    "trades_per_day": 2.0,
+    "win_rate": 0.80,
+    "max_drawdown_pct": 2.0,
+    "sharpe_ratio": 2.5
+  }
+}

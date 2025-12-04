@@ -13,7 +13,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from config import get_config
+from app_config import get_config
 from logger import get_logger
 from strategy import (
     BaseStrategy, MultiModalStrategy, Signal, SignalDirection,

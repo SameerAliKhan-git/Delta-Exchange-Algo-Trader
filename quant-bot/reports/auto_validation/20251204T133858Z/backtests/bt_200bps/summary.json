@@ -1,0 +1,13 @@
+{
+  "cost_bps": 20.0,
+  "net_return": -0.8610935948348921,
+  "net_return_pct": -86.10935948348921,
+  "sharpe_ratio": -6.160113876733871,
+  "max_drawdown": 0.8611853833728418,
+  "max_drawdown_pct": 86.11853833728418,
+  "win_rate": 0.3531746031746032,
+  "profit_factor": 0.36899158816968003,
+  "n_trading_days": 252,
+  "final_equity": 13890.64051651079,
+  "profitable": false
+}

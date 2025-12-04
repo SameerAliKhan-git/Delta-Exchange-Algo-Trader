@@ -115,7 +115,7 @@ def main():
     print("\n🤖 STEP 5: Training Model...")
     
     trainer = ModelTrainer(
-        model_type='xgboost',
+        model_type='random_forest',
         n_splits=5,
         purge_gap=10,
         embargo_pct=0.01

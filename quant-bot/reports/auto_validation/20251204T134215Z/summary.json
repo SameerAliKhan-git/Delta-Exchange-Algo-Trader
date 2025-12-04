@@ -1,0 +1,23 @@
+{
+  "run_id": "20251204T134215Z",
+  "mode": "paper",
+  "service_check": {
+    "dashboard": false,
+    "model_registry": false,
+    "data_presence": true,
+    "data_missing": [],
+    "all_critical_ok": true
+  },
+  "data_validation": {
+    "all_valid": false
+  },
+  "training": {
+    "baseline_success": true,
+    "meta_success": true
+  },
+  "backtest": {
+    "breakeven_cost_bps": null,
+    "profitable_costs": []
+  },
+  "completed_at": "2025-12-04T13:42:46.495361"
+}

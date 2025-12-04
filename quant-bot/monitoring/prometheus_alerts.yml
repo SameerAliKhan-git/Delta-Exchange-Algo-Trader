@@ -1,0 +1,276 @@
+# Prometheus Alert Rules for Production Trading
+# ==============================================
+# Deploy to: /etc/prometheus/rules/trading_alerts.yml
+# Reload: curl -X POST http://localhost:9090/-/reload
+
+groups:
+  - name: trading_critical
+    interval: 30s
+    rules:
+      # =========================================================================
+      # CRITICAL ALERTS - Immediate action required
+      # =========================================================================
+      
+      - alert: HourlyLossExceeded
+        expr: increase(strategy_net_pnl_total[1h]) < -0.005 * trading_aum_total
+        for: 5m
+        labels:
+          severity: critical
+          team: trading-ops
+        annotations:
+          summary: "Hourly loss exceeds 0.5% of AUM"
+          description: "Strategy has lost {{ $value | humanize }} in the last hour. AUM: {{ $labels.aum }}. Immediate investigation required."
+          runbook_url: "https://wiki.internal/runbooks/hourly-loss-exceeded"
+          action: "AUTO_KILL_SWITCH"
+      
+      - alert: DailyLossExceeded
+        expr: increase(strategy_net_pnl_total[24h]) < -0.02 * trading_aum_total
+        for: 10m
+        labels:
+          severity: critical
+          team: trading-ops
+        annotations:
+          summary: "Daily loss exceeds 2% of AUM"
+          description: "Strategy has lost {{ $value | humanize }} in the last 24 hours. Max allowed: 2% of AUM."
+          runbook_url: "https://wiki.internal/runbooks/daily-loss-exceeded"
+          action: "AUTO_KILL_SWITCH"
+      
+      - alert: MaxDrawdownBreached
+        expr: trading_max_drawdown_pct > 0.10
+        for: 1m
+        labels:
+          severity: critical
+          team: trading-ops
+        annotations:
+          summary: "Maximum drawdown threshold breached (10%)"
+          description: "Current drawdown: {{ $value | humanizePercentage }}. Kill switch should activate."
+          runbook_url: "https://wiki.internal/runbooks/max-drawdown"
+          action: "AUTO_KILL_SWITCH"
+      
+      - alert: KillSwitchActivated
+        expr: trading_kill_switch_active == 1
+        for: 0m
+        labels:
+          severity: critical
+          team: trading-ops
+        annotations:
+          summary: "Trading kill switch has been activated"
+          description: "All trading halted. Reason: {{ $labels.reason }}"
+          runbook_url: "https://wiki.internal/runbooks/kill-switch"
+      
+      - alert: OnlineModelPerformanceDegraded
+        expr: |
+          avg_over_time(model_meta_precision[1d]) 
+          < 0.8 * avg_over_time(model_meta_precision[7d] offset 1d)
+        for: 30m
+        labels:
+          severity: critical
+          team: ml-ops
+        annotations:
+          summary: "Online model precision dropped >20% vs baseline"
+          description: "Current precision: {{ $value }}. Baseline: {{ $labels.baseline }}. Consider rollback."
+          runbook_url: "https://wiki.internal/runbooks/model-degradation"
+          action: "FREEZE_ONLINE_LEARNING"
+
+      - alert: RealisedSlippageCritical
+        expr: |
+          avg_over_time(slippage_realized_bps[30m]) 
+          > 3 * avg_over_time(slippage_simulated_bps[7d])
+        for: 5m
+        labels:
+          severity: critical
+          team: execution
+        annotations:
+          summary: "Realized slippage 3x higher than simulated"
+          description: "Realized: {{ $value }}bps. Expected: {{ $labels.expected }}bps. Execution quality severely degraded."
+          runbook_url: "https://wiki.internal/runbooks/slippage-spike"
+          action: "REDUCE_POSITION_SIZES"
+
+  - name: trading_warning
+    interval: 60s
+    rules:
+      # =========================================================================
+      # WARNING ALERTS - Investigation required
+      # =========================================================================
+      
+      - alert: RealisedSlippageWarning
+        expr: |
+          avg_over_time(slippage_realized_bps[30m]) 
+          > 2 * avg_over_time(slippage_simulated_bps[7d])
+        for: 10m
+        labels:
+          severity: warning
+          team: execution
+        annotations:
+          summary: "Realized slippage 2x higher than simulated"
+          description: "Realized: {{ $value }}bps. Expected: {{ $labels.expected }}bps."
+          runbook_url: "https://wiki.internal/runbooks/slippage-warning"
+
+      - alert: FillRateDropped
+        expr: (trading_orders_filled / trading_orders_placed) < 0.9
+        for: 5m
+        labels:
+          severity: warning
+          team: execution
+        annotations:
+          summary: "Fill rate dropped below 90%"
+          description: "Current fill rate: {{ $value | humanizePercentage }}. Check exchange connectivity."
+          runbook_url: "https://wiki.internal/runbooks/fill-rate"
+
+      - alert: ModelDriftDetected_PSI
+        expr: model_feature_psi > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          team: ml-ops
+        annotations:
+          summary: "Feature drift detected (PSI > 0.2)"
+          description: "Feature {{ $labels.feature }} PSI: {{ $value }}. Distribution shift detected."
+          runbook_url: "https://wiki.internal/runbooks/feature-drift"
+
+      - alert: ModelDriftDetected_KS
+        expr: model_feature_ks_pvalue < 0.01
+        for: 10m
+        labels:
+          severity: warning
+          team: ml-ops
+        annotations:
+          summary: "Feature drift detected (KS p-value < 0.01)"
+          description: "Feature {{ $labels.feature }} KS p-value: {{ $value }}. Significant distribution change."
+          runbook_url: "https://wiki.internal/runbooks/feature-drift"
+
+      - alert: OrderFlowGateBlockingHigh
+        expr: |
+          rate(orderflow_gate_blocked_total[1h]) 
+          / rate(orderflow_gate_evaluated_total[1h]) > 0.7
+        for: 30m
+        labels:
+          severity: warning
+          team: trading-ops
+        annotations:
+          summary: "Order flow gate blocking >70% of trades"
+          description: "Gate blocking rate: {{ $value | humanizePercentage }}. May indicate regime change."
+
+      - alert: RegimeInstability
+        expr: |
+          changes(regime_current[1h]) > 10
+        for: 15m
+        labels:
+          severity: warning
+          team: trading-ops
+        annotations:
+          summary: "Regime classification unstable"
+          description: "{{ $value }} regime changes in last hour. Market may be in transition."
+
+      - alert: CircuitBreakerTriggered
+        expr: increase(circuit_breaker_triggers_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          team: trading-ops
+        annotations:
+          summary: "Circuit breaker triggered"
+          description: "Circuit breaker {{ $labels.type }} triggered. Reason: {{ $labels.reason }}"
+
+      - alert: HighLatencyFills
+        expr: histogram_quantile(0.95, rate(fill_latency_ms_bucket[5m])) > 500
+        for: 5m
+        labels:
+          severity: warning
+          team: execution
+        annotations:
+          summary: "P95 fill latency exceeds 500ms"
+          description: "P95 latency: {{ $value }}ms. Check network/exchange connectivity."
+
+      - alert: APIRateLimitApproaching
+        expr: api_rate_limit_remaining < 100
+        for: 2m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "API rate limit nearly exhausted"
+          description: "Remaining: {{ $value }} requests. Reduce order frequency."
+
+  - name: trading_info
+    interval: 300s
+    rules:
+      # =========================================================================
+      # INFO ALERTS - For tracking/audit
+      # =========================================================================
+      
+      - alert: ModelUpdateApplied
+        expr: increase(model_updates_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: info
+          team: ml-ops
+        annotations:
+          summary: "Model update applied"
+          description: "Model {{ $labels.model_name }} updated to version {{ $labels.version }}"
+
+      - alert: CanaryStageTransition
+        expr: changes(canary_stage[5m]) > 0
+        for: 0m
+        labels:
+          severity: info
+          team: trading-ops
+        annotations:
+          summary: "Canary deployment stage changed"
+          description: "New stage: {{ $labels.stage }}. AUM allocation: {{ $labels.aum_pct }}"
+
+      - alert: DailyReportGenerated
+        expr: increase(daily_reports_generated_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: info
+          team: trading-ops
+        annotations:
+          summary: "Daily trading report generated"
+          description: "Report available at: {{ $labels.report_url }}"
+
+# =========================================================================
+# ALERTMANAGER ROUTING CONFIGURATION
+# =========================================================================
+# Add this to alertmanager.yml:
+#
+# route:
+#   receiver: 'default'
+#   group_by: ['alertname', 'severity']
+#   group_wait: 30s
+#   group_interval: 5m
+#   repeat_interval: 4h
+#   routes:
+#     - match:
+#         severity: critical
+#       receiver: 'critical-alerts'
+#       continue: true
+#     - match:
+#         severity: warning
+#       receiver: 'warning-alerts'
+#     - match:
+#         severity: info
+#       receiver: 'info-slack'
+#
+# receivers:
+#   - name: 'critical-alerts'
+#     pagerduty_configs:
+#       - service_key: '<PAGERDUTY_KEY>'
+#     slack_configs:
+#       - api_url: '<SLACK_WEBHOOK>'
+#         channel: '#trading-critical'
+#         title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+#     webhook_configs:
+#       - url: 'http://localhost:8080/alerts/kill-switch'
+#         send_resolved: true
+#
+#   - name: 'warning-alerts'
+#     slack_configs:
+#       - api_url: '<SLACK_WEBHOOK>'
+#         channel: '#trading-alerts'
+#         title: '⚠️ Warning: {{ .GroupLabels.alertname }}'
+#
+#   - name: 'info-slack'
+#     slack_configs:
+#       - api_url: '<SLACK_WEBHOOK>'
+#         channel: '#trading-info'

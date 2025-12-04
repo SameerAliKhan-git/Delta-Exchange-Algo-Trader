@@ -1,0 +1,627 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "IV Surface Shifts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "🌊 IV Surface Overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "IV %",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line+area" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "ATM IV" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#6ed0e0", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "25D Call IV" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#7eb26d", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "25D Put IV" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#ef843c", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "mean", "max", "min"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "iv_surface_atm_iv{underlying=\"BTCUSD\"} * 100",
+          "legendFormat": "ATM IV",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "iv_surface_25d_call_iv{underlying=\"BTCUSD\"} * 100",
+          "legendFormat": "25D Call IV",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "iv_surface_25d_put_iv{underlying=\"BTCUSD\"} * 100",
+          "legendFormat": "25D Put IV",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "📈 BTC IV Term Structure",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": true,
+            "axisLabel": "Skew %",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 2,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }
+      },
+      "targets": [
+        {
+          "expr": "(iv_surface_25d_put_iv{underlying=\"BTCUSD\"} - iv_surface_25d_call_iv{underlying=\"BTCUSD\"}) * 100",
+          "legendFormat": "25D Risk Reversal",
+          "refId": "A"
+        },
+        {
+          "expr": "((iv_surface_25d_put_iv{underlying=\"BTCUSD\"} + iv_surface_25d_call_iv{underlying=\"BTCUSD\"}) / 2 - iv_surface_atm_iv{underlying=\"BTCUSD\"}) * 100",
+          "legendFormat": "25D Butterfly",
+          "refId": "B"
+        }
+      ],
+      "title": "📊 Skew & Smile (Risk Reversal / Butterfly)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1.5 },
+              { "color": "red", "value": 2.5 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 9 },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "iv_surface_shift_zscore{underlying=\"BTCUSD\"}",
+          "legendFormat": "Z-Score",
+          "refId": "A"
+        }
+      ],
+      "title": "⚡ Surface Shift Z-Score",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 9 },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "abs(delta(iv_surface_atm_iv{underlying=\"BTCUSD\"}[1h])) * 100",
+          "legendFormat": "1h Change",
+          "refId": "A"
+        }
+      ],
+      "title": "📉 ATM IV 1h Change",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "#EAB839", "value": 10 },
+              { "color": "red", "value": 20 }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 9 },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "(iv_surface_atm_iv{underlying=\"BTCUSD\"} - iv_surface_realized_vol{underlying=\"BTCUSD\"}) * 100",
+          "legendFormat": "IV - RV Spread",
+          "refId": "A"
+        }
+      ],
+      "title": "📊 IV vs Realized Spread",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "green", "value": 1.0 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 9 },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "expr": "iv_surface_vix_correlation{underlying=\"BTCUSD\"}",
+          "legendFormat": "VIX Correlation",
+          "refId": "A"
+        }
+      ],
+      "title": "🔗 VIX Correlation",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-GrYlRd" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 9 },
+      "id": 7,
+      "options": {
+        "displayMode": "lcd",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "expr": "iv_surface_term_structure_slope{underlying=\"BTCUSD\", tenor=\"7d\"} * 100",
+          "legendFormat": "7D",
+          "refId": "A"
+        },
+        {
+          "expr": "iv_surface_term_structure_slope{underlying=\"BTCUSD\", tenor=\"14d\"} * 100",
+          "legendFormat": "14D",
+          "refId": "B"
+        },
+        {
+          "expr": "iv_surface_term_structure_slope{underlying=\"BTCUSD\", tenor=\"30d\"} * 100",
+          "legendFormat": "30D",
+          "refId": "C"
+        }
+      ],
+      "title": "📅 Term Structure by Tenor",
+      "type": "bargauge"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "id": 101,
+      "panels": [],
+      "title": "🔥 IV Surface Heatmap & Alerts",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-BlYlRd" },
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 30 },
+              { "color": "yellow", "value": 50 },
+              { "color": "orange", "value": 70 },
+              { "color": "red", "value": 90 }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 10, "w": 16, "x": 0, "y": 14 },
+      "id": 8,
+      "options": {
+        "calculate": false,
+        "cellGap": 2,
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "mode": "scheme",
+          "scale": "exponential",
+          "scheme": "Spectral",
+          "steps": 64
+        },
+        "exemplars": { "color": "rgba(255,0,255,0.7)" },
+        "filterValues": { "le": 1e-9 },
+        "legend": { "show": true },
+        "rowsFrame": { "layout": "auto" },
+        "tooltip": { "show": true, "yHistogram": false },
+        "yAxis": { "axisPlacement": "left", "reverse": false }
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "expr": "iv_surface_strike_iv{underlying=\"BTCUSD\"} * 100",
+          "format": "heatmap",
+          "legendFormat": "{{strike}}",
+          "refId": "A"
+        }
+      ],
+      "title": "🔥 IV Surface Heatmap (Strike x Time)",
+      "type": "heatmap"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "displayMode": "color-background",
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 10, "w": 8, "x": 16, "y": 14 },
+      "id": 9,
+      "options": {
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "expr": "ALERTS{alertname=~\"IVSurface.*\", alertstate=\"firing\"}",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "🚨 Active IV Surface Alerts",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "indexByName": {},
+            "renameByName": {
+              "alertname": "Alert",
+              "alertstate": "State",
+              "severity": "Severity"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "id": 102,
+      "panels": [],
+      "title": "📈 IV Change Detection",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": true,
+            "axisLabel": "IV Change (%)",
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "id": 10,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true }
+      },
+      "targets": [
+        {
+          "expr": "delta(iv_surface_atm_iv{underlying=\"BTCUSD\"}[5m]) * 100",
+          "legendFormat": "5m Change",
+          "refId": "A"
+        },
+        {
+          "expr": "delta(iv_surface_atm_iv{underlying=\"BTCUSD\"}[1h]) * 100",
+          "legendFormat": "1h Change",
+          "refId": "B"
+        }
+      ],
+      "title": "📊 ATM IV Rate of Change",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "iv_surface_atm_iv{underlying=\"BTCUSD\"} * 100",
+          "legendFormat": "Current ATM IV",
+          "refId": "A"
+        },
+        {
+          "expr": "iv_surface_atm_iv_sma_24h{underlying=\"BTCUSD\"} * 100",
+          "legendFormat": "24h SMA",
+          "refId": "B"
+        },
+        {
+          "expr": "(iv_surface_atm_iv_sma_24h{underlying=\"BTCUSD\"} + 2 * iv_surface_atm_iv_std_24h{underlying=\"BTCUSD\"}) * 100",
+          "legendFormat": "+2σ Band",
+          "refId": "C"
+        },
+        {
+          "expr": "(iv_surface_atm_iv_sma_24h{underlying=\"BTCUSD\"} - 2 * iv_surface_atm_iv_std_24h{underlying=\"BTCUSD\"}) * 100",
+          "legendFormat": "-2σ Band",
+          "refId": "D"
+        }
+      ],
+      "title": "📈 IV with Bollinger Bands (±2σ)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "id": 103,
+      "panels": [],
+      "title": "🌍 Cross-Asset IV Comparison",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 34 },
+      "id": 12,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true }
+      },
+      "targets": [
+        {
+          "expr": "iv_surface_atm_iv{underlying=\"BTCUSD\"} * 100",
+          "legendFormat": "BTC ATM IV",
+          "refId": "A"
+        },
+        {
+          "expr": "iv_surface_atm_iv{underlying=\"ETHUSD\"} * 100",
+          "legendFormat": "ETH ATM IV",
+          "refId": "B"
+        },
+        {
+          "expr": "iv_surface_atm_iv{underlying=\"SOLUSD\"} * 100",
+          "legendFormat": "SOL ATM IV",
+          "refId": "C"
+        },
+        {
+          "expr": "iv_surface_vix_index * 100",
+          "legendFormat": "Crypto VIX",
+          "refId": "D"
+        }
+      ],
+      "title": "🌍 Cross-Asset IV Comparison",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["options", "iv", "volatility", "surface", "realtime"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "BTCUSD", "value": "BTCUSD" },
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(iv_surface_atm_iv, underlying)",
+        "name": "underlying",
+        "options": [],
+        "query": { "query": "label_values(iv_surface_atm_iv, underlying)", "refId": "A" },
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": { "selected": false, "text": "2", "value": "2" },
+        "name": "zscore_threshold",
+        "options": [
+          { "selected": false, "text": "1.5", "value": "1.5" },
+          { "selected": true, "text": "2", "value": "2" },
+          { "selected": false, "text": "2.5", "value": "2.5" },
+          { "selected": false, "text": "3", "value": "3" }
+        ],
+        "query": "1.5,2,2.5,3",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "IV Surface Monitor - Realtime",
+  "uid": "iv-surface-realtime",
+  "version": 1,
+  "weekStart": ""
+}
