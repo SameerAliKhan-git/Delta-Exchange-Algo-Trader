@@ -634,6 +634,55 @@ class AlmgrenChrissExecutor:
             'avg_participation': np.mean([r.participation_rate for r in self.execution_history])
         }
 
+    def calculate_optimal_slice_size(
+        self,
+        symbol: str,
+        total_quantity: float,
+        current_volatility: float,
+        historical_avg_vol: float = 0.02
+    ) -> float:
+        """
+        Dynamic slicing based on:
+        1. Current volatility (increase slices in high vol)
+        2. Time of day (liquidity patterns) - simplified here
+        3. Order book depth - simplified
+        """
+        # Get base slice from optimal trajectory (IS strategy)
+        # We assume a standard 1-hour execution for the base calculation
+        # In IS, the initial trade is usually the largest.
+        
+        params = self.get_params(symbol)
+        model = AlmgrenChrissModel(params)
+        
+        # Calculate optimal trajectory for 1 hour
+        times, positions = model.optimal_trajectory(
+            total_quantity, 
+            price=10000, # Dummy price, doesn't affect trajectory shape
+            time_horizon=1.0, 
+            strategy=ExecutionStrategy.IS
+        )
+        
+        # Base slice is the first trade size
+        base_slice = total_quantity - positions[1]
+        
+        # Adjust for volatility
+        # If vol is high, we might want to trade smaller chunks more frequently (or larger if we want to finish fast?)
+        # Almgren-Chriss says: High vol -> Trade faster (larger initial slice) to reduce timing risk.
+        # But the user prompt says: "Dynamic slicing based on: Current volatility (increase slices in high vol)"
+        # "Increase slices" usually means "more slices" = "smaller size per slice"? 
+        # Or "increase slice size"?
+        # Context: "Profit Boost #1: Intelligent Order Slicing... volatility_multiplier = 1 + ... * 0.5"
+        # If multiplier > 1, slice size increases.
+        # So high vol -> larger slices (faster execution) to avoid risk. This matches IS logic.
+        
+        vol_ratio = current_volatility / historical_avg_vol if historical_avg_vol > 0 else 1.0
+        volatility_multiplier = 1 + (vol_ratio - 1) * 0.5
+        
+        optimal_slice = base_slice * volatility_multiplier
+        
+        # Cap at total quantity
+        return min(optimal_slice, total_quantity)
+
 
 # =============================================================================
 # CRYPTO-SPECIFIC PARAMETERS

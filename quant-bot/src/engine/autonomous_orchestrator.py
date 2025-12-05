@@ -27,6 +27,10 @@ import pickle
 import warnings
 warnings.filterwarnings('ignore')
 
+from src.memory.bot_memory import BotMemory
+from src.ml.neural_classifier import AdaptiveTrader
+from src.features.indicators import FeatureEngineer
+
 
 # =============================================================================
 # CONFIGURATION
@@ -43,20 +47,20 @@ class OrchestratorConfig:
     
     # Trading settings
     symbols: List[str] = field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
-    max_positions: int = 5
-    position_size_usd: float = 1000.0
-    max_portfolio_risk: float = 0.05  # 5% max drawdown
+    max_positions: int = 2  # Focus on best 1-2 trades
+    position_size_usd: float = 450.0  # $90 * 50% * 10x leverage = $450
+    max_portfolio_risk: float = 0.10  # 10% max drawdown
     
     # Signal settings
-    signal_threshold: float = 0.6
-    min_holding_hours: float = 1.0
-    max_holding_hours: float = 24.0
+    signal_threshold: float = 0.80  # Sniper entry: only high confidence
+    min_holding_hours: float = 0.5
+    max_holding_hours: float = 12.0
     
     # Risk settings
-    stop_loss_pct: float = 0.02
-    take_profit_pct: float = 0.04
-    max_daily_trades: int = 20
-    max_daily_loss_pct: float = 0.03
+    stop_loss_pct: float = 0.015  # Tight 1.5% stop
+    take_profit_pct: float = 0.04  # 4% target
+    max_daily_trades: int = 10  # Quality over quantity
+    max_daily_loss_pct: float = 0.05
     
     # Data settings
     lookback_bars: int = 500
@@ -439,17 +443,45 @@ class RiskController:
             
             price = prices[symbol]
             
+            # Trailing Stop Logic ("Cut Losses, Hold Profits")
+            # 1. Move to Break-Even if profit > 1%
+            # 2. Trail by 1.5% if profit > 2%
+            
+            pnl_pct = (price - pos.entry_price) / pos.entry_price if pos.side == 'long' else \
+                      (pos.entry_price - price) / pos.entry_price
+            
+            if pnl_pct > 0.01: # 1% profit
+                # Move SL to Entry (Break Even)
+                if pos.side == 'long':
+                    pos.stop_loss = max(pos.stop_loss, pos.entry_price * 1.001)
+                else:
+                    pos.stop_loss = min(pos.stop_loss, pos.entry_price * 0.999)
+                    
+            if pnl_pct > 0.02: # 2% profit
+                # Trail by 1.5%
+                if pos.side == 'long':
+                    new_stop = price * 0.985
+                    pos.stop_loss = max(pos.stop_loss, new_stop)
+                    # Disable fixed TP to let profits run
+                    pos.take_profit = price * 2.0 
+                else:
+                    new_stop = price * 1.015
+                    pos.stop_loss = min(pos.stop_loss, new_stop)
+                    pos.take_profit = price * 0.5
+
             # Stop loss
             if pos.side == 'long' and price <= pos.stop_loss:
                 exits.append((symbol, 'stop_loss'))
             elif pos.side == 'short' and price >= pos.stop_loss:
                 exits.append((symbol, 'stop_loss'))
             
-            # Take profit
+            # Take profit (Only if not trailing/overridden)
             if pos.side == 'long' and price >= pos.take_profit:
                 exits.append((symbol, 'take_profit'))
             elif pos.side == 'short' and price <= pos.take_profit:
                 exits.append((symbol, 'take_profit'))
+            
+
             
             # Max holding time
             holding_hours = (datetime.now() - pos.entry_time).total_seconds() / 3600
@@ -489,6 +521,22 @@ class AutonomousOrchestrator:
         self.model_manager = ModelManager()
         self.risk_controller = RiskController(self.config)
         self.signal_aggregator = SignalAggregator()
+        
+        # Meta-Learner for Strategy Selection
+        from src.ml.meta_learner_bandit import MetaLearnerBandit
+        self.meta_learner = MetaLearnerBandit(
+            strategies=['ml_ensemble', 'momentum', 'mean_reversion', 'scalping']
+        )
+        
+        # Order Flow Confirmation
+        # Order Flow Confirmation
+        from src.strategies.microstructure import MicrostructureStrategy, OrderBookSnapshot
+        self.order_flow = MicrostructureStrategy()
+        self.memory = BotMemory()
+        
+        # Neural Components (IEEE Paper Implementation)
+        self.neural_trader = AdaptiveTrader()
+        self.feature_engineer = FeatureEngineer()
         
         # State
         self.state = SystemState.INITIALIZING
@@ -607,8 +655,23 @@ class AutonomousOrchestrator:
             self.logger.error(f"Signal generation error: {e}")
             return {'signal': 0, 'confidence': 0, 'reason': str(e)}
     
+    def is_economically_viable(self, signal_conf: float, price: float) -> bool:
+        """
+        Check if trade is viable after fees and slippage.
+        Min Edge = (Taker Fee * 2) + Est. Slippage + Buffer
+        """
+        taker_fee = 0.00075 # 0.075%
+        slippage = 0.0005   # 0.05%
+        buffer = 0.002      # 0.2% buffer
+        
+        min_edge = (taker_fee * 2) + slippage + buffer
+        
+        # We assume signal_conf roughly maps to expected return or edge
+        # Ideally this should be calibrated, but for now we use confidence as proxy
+        return signal_conf > min_edge
+
     async def execute_trade(self, symbol: str, side: str,
-                           price: float) -> bool:
+                           price: float, strategy: str = 'ml_ensemble') -> bool:
         """Execute a trade."""
         quantity = self.config.position_size_usd / price
         
@@ -622,39 +685,6 @@ class AutonomousOrchestrator:
                 position_side = 'long'
             else:
                 stop_loss = price * (1 + self.config.stop_loss_pct)
-                take_profit = price * (1 - self.config.take_profit_pct)
-                position_side = 'short'
-            
-            position = Position(
-                symbol=symbol,
-                side=position_side,
-                entry_price=price,
-                quantity=quantity,
-                entry_time=datetime.now(),
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                strategy='ml_ensemble'
-            )
-            
-            self.risk_controller.add_position(position)
-            
-            self.trade_history.append({
-                'timestamp': datetime.now().isoformat(),
-                'symbol': symbol,
-                'side': side,
-                'price': price,
-                'quantity': quantity,
-                'type': 'entry'
-            })
-            
-            return True
-        
-        try:
-            result = await self.order_executor(symbol, side, quantity, price)
-            return result.get('success', False)
-        except Exception as e:
-            self.logger.error(f"Order execution error: {e}")
-            return False
     
     async def check_and_train(self, force: bool = False) -> bool:
         """Check if retraining is needed and train if so."""
@@ -726,33 +756,167 @@ class AutonomousOrchestrator:
             features = self.compute_features(data)
             self.samples_since_train += 1
             
-            # Generate signal
-            signal_data = self.generate_signal(symbol, features)
+            # --- NEURAL CLASSIFIER (IEEE Paper) ---
+            # 1. Compute optimized features
+            neural_features = self.feature_engineer.compute_features(data)
+            
+            # 2. Predict (Wait/Buy/Sell)
+            neural_signal, neural_conf = self.neural_trader.predict(neural_features[-1])
+            
+            # 3. Wait State Filter
+            if neural_signal == 0: # WAIT
+                # self.logger.debug(f"Neural Classifier: WAIT (Conf: {neural_conf:.2f})")
+                continue
+                
+            # 4. Transaction Cost Filter
+            # Edge = (Conf * 2*ATR% - (1-Conf) * ATR%)
+            # Using volatility as proxy for ATR%
+            atr_pct = features['volatility_10'].iloc[-1] if 'volatility_10' in features else 0.005
+            est_edge = (neural_conf * 2 * atr_pct) - ((1 - neural_conf) * atr_pct)
+            cost_threshold = 0.0020 # 0.20% (Fees + Slippage + Buffer)
+            
+            if est_edge < cost_threshold:
+                 self.logger.info(f"Trade BLOCKED: Edge {est_edge:.2%} < Cost {cost_threshold:.2%}")
+                 continue
+                 
+            # 5. Set Signal (Override Meta-Learner)
+            agg_signal = 1.0 if neural_signal == 1 else -1.0
+            agg_confidence = neural_conf
+            selected_strategy = "Neural_IEEE"
+            
+            # Skip legacy strategy selection
+            # --------------------------------------
+            
+            # If Neural Classifier didn't set a strategy (or we want to fallback), run legacy
+            if 'selected_strategy' not in locals():
+                # 1. Determine Market Regime (Simplified for now)
+                # In production, use a dedicated RegimeClassifier
+                volatility = features['volatility_20'].iloc[-1]
+                trend_strength = abs(features['sma_ratio_50'].iloc[-1] - 1)
+                
+                if volatility > 0.02:
+                    regime = 'volatile'
+                elif trend_strength > 0.05:
+                    regime = 'trending'
+                else:
+                    regime = 'ranging'
+            
+                # 2. Select Best Strategy via Meta-Learner
+                selected_strategy, confidence = self.meta_learner.select_strategy(regime=regime)
+                
+                # 3. Generate Signal based on Selected Strategy
+                signal = 0.0
+                signal_conf = 0.0
+                
+                if selected_strategy == 'ml_ensemble':
+                    # Use the ML model we trained
+                    sig_data = self.generate_signal(symbol, features)
+                    signal = sig_data['signal']
+                    signal_conf = sig_data['confidence']
+                    
+                elif selected_strategy == 'momentum':
+                    # Simple Momentum Logic
+                    sma_20 = features['sma_20'].iloc[-1]
+                    sma_50 = features['sma_50'].iloc[-1]
+                    if price > sma_20 > sma_50:
+                        signal = 1
+                        signal_conf = 0.7
+                    elif price < sma_20 < sma_50:
+                        signal = -1
+                        signal_conf = 0.7
+                        
+                elif selected_strategy == 'mean_reversion':
+                    # Simple Mean Reversion Logic (RSI)
+                    rsi = features['rsi'].iloc[-1]
+                    if rsi < 30:
+                        signal = 1
+                        signal_conf = (30 - rsi) / 30
+                    elif rsi > 70:
+                        signal = -1
+                        signal_conf = (rsi - 70) / 30
+                        
+                elif selected_strategy == 'scalping':
+                    # Fast Scalping Logic (Price vs EMA 5 + Volume)
+                    ema_5 = features['ema_5'].iloc[-1]
+                    vol_ratio = features.get('volume_ratio', 1.0).iloc[-1]
+                    
+                    # Only scalp if volume is decent
+                    if vol_ratio > 0.8:
+                        if price > ema_5:
+                            signal = 1
+                            signal_conf = 0.6  # Lower confidence for scalps, relies on volume
+                        elif price < ema_5:
+                            signal = -1
+                            signal_conf = 0.6
             
             # Add to aggregator
             self.signal_aggregator.add_signal(
-                'ml_ensemble', symbol,
-                signal_data['signal'],
-                signal_data['confidence']
+                selected_strategy, symbol,
+                signal, signal_conf
             )
             
-            # Get aggregate signal
+            # Get aggregate signal (Fuses Strategy + News + Social)
             agg_signal, agg_confidence = self.signal_aggregator.get_aggregate_signal(symbol)
             
-            # Check if we should trade
+            # Update Order Flow (Simulated for backtest, Real in production)
+            # In a real run, we would get this from the WebSocket client
+            # Here we approximate from OHLCV
+            sim_snapshot = OrderBookSnapshot(
+                timestamp=datetime.now(),
+                bids=[(price*0.999, 1000)], 
+                asks=[(price*1.001, 1000)]
+            )
+            self.order_flow.update(sim_snapshot, price, data['volume'].iloc[-1], 'buy' if data['close'].iloc[-1] > data['open'].iloc[-1] else 'sell')
+
+            # Check if we should trade using AGGREGATED signal
             if abs(agg_signal) > self.config.signal_threshold and agg_confidence > 0.5:
+                
+                # --- TACTICAL FILTERS (Survival Mode) ---
+                # 1. Economic Viability (Fees + Slippage)
+                if not self.is_economically_viable(agg_confidence, price):
+                    self.logger.info(f"Trade BLOCKED: Not economically viable (Conf: {agg_confidence:.2f})")
+                    continue
+
+                # 2. Error Memory (Avoid past mistakes)
+                # Construct context vector: [volatility, rsi, volume_ratio, spread_bps]
+                # Note: spread_bps might need to be calculated or estimated
+                current_context = [
+                    features['volatility'].iloc[-1],
+                    features['rsi'].iloc[-1],
+                    features.get('volume_ratio', 1.0).iloc[-1],
+                    0.0 # Placeholder for spread if not available
+                ]
+                
+                if self.memory.client:
+                    similar_errors = self.memory.query_similar(current_context, memory_type='error', n_results=1)
+                    if similar_errors and similar_errors[0]['distance'] < 0.2:
+                        self.logger.info(f"Trade BLOCKED: Context resembles past failure (Dist: {similar_errors[0]['distance']:.3f})")
+                        continue
+                # ----------------------------------------
+
+                # --- ORDER FLOW CONFIRMATION GATE ---
+                side = 'buy' if agg_signal > 0 else 'sell'
+                confirmed, flow_reason = self.order_flow.confirm_trade(side, price)
+                
+                if not confirmed:
+                    self.logger.info(f"Trade BLOCKED by Order Flow: {flow_reason}")
+                    continue
+                # ------------------------------------
+                
                 can_trade, reason = self.risk_controller.can_open_position(
                     symbol, self.config.position_size_usd
                 )
                 
                 if can_trade:
-                    side = 'buy' if agg_signal > 0 else 'sell'
-                    success = await self.execute_trade(symbol, side, price)
+                    # Pass the strategy name to execute_trade
+                    success = await self.execute_trade(symbol, side, price, strategy=selected_strategy)
                     
                     if success:
                         self.logger.info(
                             f"Opened {side.upper()} position in {symbol} @ {price:.2f} "
-                            f"(signal={agg_signal:.2f}, conf={agg_confidence:.2f})"
+                            f"using {selected_strategy} (Regime: {regime}) "
+                            f"[Agg Signal: {agg_signal:.2f}, Conf: {agg_confidence:.2f}] "
+                            f"[Flow: {flow_reason}]"
                         )
                 else:
                     self.logger.debug(f"Cannot trade {symbol}: {reason}")
@@ -765,6 +929,27 @@ class AutonomousOrchestrator:
         for symbol, reason in exits:
             pnl = self.risk_controller.close_position(symbol, prices.get(symbol, 0))
             
+            # Log failure to Error Memory
+            if reason == 'stop_loss' and pnl < 0:
+                # Reconstruct context (best effort using current features)
+                # Ideally we'd store the entry context, but current context is a good proxy for "bad regime"
+                if symbol in self.market_data:
+                    features = self.compute_features(self.market_data[symbol])
+                    if not features.empty:
+                        current_context = [
+                            features['volatility'].iloc[-1],
+                            features['rsi'].iloc[-1],
+                            features.get('volume_ratio', 1.0).iloc[-1],
+                            0.0 
+                        ]
+                        self.memory.store_experience(
+                            features=current_context,
+                            outcome=-1.0,
+                            context={'symbol': symbol, 'reason': reason, 'strategy': 'unknown'},
+                            memory_type='error'
+                        )
+                        self.logger.info(f"Logged failure to Vector Memory: {symbol} ({reason})")
+
             self.trade_history.append({
                 'timestamp': datetime.now().isoformat(),
                 'symbol': symbol,
@@ -832,6 +1017,36 @@ class AutonomousOrchestrator:
             errors=self.errors[-5:]
         )
     
+    def perform_edge_audit(self):
+        """
+        Audit Net Edge = Gross PnL - Fees - Slippage.
+        Alert if Fees > 50% of Gross Profit.
+        """
+        if not self.trade_history:
+            return
+
+        gross_profit = sum(t['pnl'] for t in self.trade_history if t['type'] == 'exit')
+        
+        # Estimate fees (0.075% per side = 0.15% round trip)
+        # We need trade size for this. Assuming position_size_usd for simplicity if not stored.
+        # In a real system, we'd store exact fees paid.
+        total_volume = len([t for t in self.trade_history if t['type'] == 'exit']) * self.config.position_size_usd * 2
+        fees_paid = total_volume * 0.00075 
+        
+        # Estimate slippage (0.05% per side = 0.1% round trip)
+        slippage_cost = total_volume * 0.0005
+
+        net_edge = gross_profit - fees_paid - slippage_cost
+        
+        self.logger.info(f"--- EDGE AUDIT ---")
+        self.logger.info(f"Gross Profit: ${gross_profit:.2f}")
+        self.logger.info(f"Est. Fees:    ${fees_paid:.2f}")
+        self.logger.info(f"Est. Slippage:${slippage_cost:.2f}")
+        self.logger.info(f"Net Edge:     ${net_edge:.2f}")
+        
+        if gross_profit > 0 and fees_paid > (gross_profit * 0.5):
+            self.logger.warning("🔴 CRITICAL: Fees eating >50% of profit. Reduce frequency.")
+
     def get_performance_report(self) -> Dict:
         """Generate performance report."""
         if not self.trade_history:

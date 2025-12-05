@@ -72,15 +72,16 @@ class BotConfig:
     LEARNING_RATE = 0.1
     
     # Backtest
-    INITIAL_CAPITAL = 100000.0
+    INITIAL_CAPITAL = 90.0
     COMMISSION_BPS = 5.0  # 5 bps
     SLIPPAGE_BPS = 2.0  # 2 bps
-    MAX_POSITION_PCT = 0.20  # 20% max position
+    MAX_POSITION_PCT = 0.95  # Use almost full capital per trade (with leverage)
     
     # Risk
-    MAX_DRAWDOWN = 0.15  # 15% max drawdown
-    DAILY_LOSS_LIMIT = 0.03  # 3% daily loss limit
-    POSITION_SIZE_PCT = 0.02  # 2% risk per trade
+    MAX_DRAWDOWN = 0.10  # 10% max drawdown (tighter stop)
+    DAILY_LOSS_LIMIT = 0.05  # 5% daily loss limit
+    POSITION_SIZE_PCT = 0.50  # 50% of equity per trade (aggressive growth)
+    LEVERAGE = 10  # 10x Leverage for growth
     
     # Paths
     DATA_DIR = PROJECT_ROOT / "data"
@@ -144,8 +145,13 @@ class DataDownloader:
                 
                 time.sleep(0.5)  # Rate limiting
             
-        except ImportError:
-            logger.warning("Delta client not available, generating synthetic data")
+        except Exception as e:
+            logger.warning(f"Delta client error: {e}")
+            logger.warning("Falling back to synthetic data generation")
+            data = self._generate_synthetic_data(symbols)
+            
+        if not data:
+            logger.warning("No data downloaded, generating synthetic data")
             data = self._generate_synthetic_data(symbols)
         
         return data

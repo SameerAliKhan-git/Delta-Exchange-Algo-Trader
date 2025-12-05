@@ -522,7 +522,105 @@ class RiskManager:
         self.is_halted = False
         self.halt_reason = ""
         logger.info("Trading resumed")
+
+    def evaluate_system_health(self, current_pnl_pct: float, avg_slippage: float) -> SystemHealth:
+        """
+        Evaluate system health based on PnL and slippage.
+        
+        Args:
+            current_pnl_pct: Current drawdown percentage (negative value)
+            avg_slippage: Average slippage percentage
+            
+        Returns:
+            SystemHealth state
+        """
+        # PANIC: Drawdown > 5% (Half of max limit)
+        if current_pnl_pct < -0.05:
+            self.logger.critical(f"PANIC MODE TRIGGERED: Drawdown {current_pnl_pct:.2%}")
+            self.halt_trading("Panic Drawdown Limit Breached")
+            return SystemHealth.PANIC
+            
+        # SAFE: Slippage > 0.2% or Drawdown > 2%
+        if avg_slippage > 0.002 or current_pnl_pct < -0.02:
+            self.logger.warning(f"SAFE MODE: High slippage ({avg_slippage:.2%}) or drawdown ({current_pnl_pct:.2%})")
+            # Tighten limits dynamically
+            self.limits.max_position_size = 0.25 # Reduce size by half
+            return SystemHealth.SAFE
+            
+        return SystemHealth.NORMAL
     
+    def calculate_portfolio_var(self, positions: np.ndarray, correlation_matrix: np.ndarray) -> None:
+        """
+        Calculate Value at Risk for the entire portfolio
+        considering correlations between strategies.
+        
+        Args:
+            positions: Vector of position sizes/values
+            correlation_matrix: Correlation matrix of assets
+        """
+        if correlation_matrix is None or len(positions) == 0:
+            return
+
+        # Calculate portfolio standard deviation
+        # Portfolio Variance = w.T * Cov * w
+        # Here we use correlation, assuming normalized positions or we need covariance.
+        # The prompt says: portfolio_std = np.sqrt(np.dot(positions.T, np.dot(correlation_matrix, positions)))
+        # This implies 'positions' are weighted by volatility or 'correlation_matrix' is actually covariance.
+        # If it's correlation, we need vol.
+        # Let's assume the user meant Covariance or positions are risk-weighted.
+        # Given the prompt's simplicity, we'll stick to the logic but ensure dimensions match.
+        
+        try:
+            portfolio_std = np.sqrt(
+                np.dot(positions.T, np.dot(correlation_matrix, positions))
+            )
+            var_95 = portfolio_std * 1.645  # 95% confidence
+            
+            # Check against limit (max_var_1d is usually a fraction of equity, e.g. 0.05)
+            # We need to know if var_95 is in $ or %.
+            # If positions are in $, var_95 is in $.
+            # max_var_1d in limits is 0.05 (5%).
+            
+            equity = self._get_equity()
+            max_var_val = equity * self.limits.max_var_1d
+            
+            if var_95 > max_var_val:
+                logger.warning(f"Portfolio VaR too high: ${var_95:,.2f} > ${max_var_val:,.2f}")
+                # Reduce position sizes proportionally
+                reduction_factor = max_var_val / var_95
+                self.reduce_all_positions(reduction_factor)
+                
+        except Exception as e:
+            logger.error(f"Error calculating portfolio VaR: {e}")
+
+    def reduce_all_positions(self, factor: float) -> None:
+        """
+        Reduce all positions by a factor.
+        
+        Args:
+            factor: Reduction factor (0.0 to 1.0)
+        """
+        if factor >= 1.0:
+            return
+            
+        logger.info(f"Reducing all positions by factor {factor:.4f}")
+        
+        for symbol, pos in self.positions.items():
+            current_size = pos['size']
+            if current_size == 0:
+                continue
+                
+            new_size = current_size * factor
+            
+            # Log the reduction (in a real system, this would send orders)
+            logger.info(f"Reducing {symbol} from {current_size} to {new_size}")
+            
+            # Update local state (assuming orders will be executed)
+            self.positions[symbol]['size'] = new_size
+            
+            # In a real integration, we would emit an event or call OrderManager here
+            # e.g. self.order_manager.resize_position(symbol, new_size)
+
     def get_summary(self) -> Dict:
         """Get risk summary."""
         portfolio_risk = self.get_portfolio_risk()
@@ -612,3 +710,4 @@ if __name__ == "__main__":
     # Get summary
     summary = risk_mgr.get_summary()
     print(f"\nSummary: {summary}")
+

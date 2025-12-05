@@ -10,7 +10,7 @@ lightgbm>=4.0.0
 optuna>=3.3.0  # Hyperparameter optimization
 
 # Deep Learning (optional)
-# torch>=2.0.0
+torch>=2.0.0
 # tensorflow>=2.13.0
 
 # Technical Analysis
@@ -26,6 +26,14 @@ pyarrow>=13.0.0  # Parquet support
 requests>=2.31.0
 websocket-client>=1.6.0
 aiohttp>=3.8.5
+fastapi>=0.100.0
+uvicorn>=0.23.0
+beautifulsoup4>=4.12.0
+
+# NLP & Sentiment
+transformers>=4.30.0
+ftfy>=6.1.1
+regex>=2023.6.3
 
 # Visualization
 matplotlib>=3.7.0
@@ -63,3 +71,8 @@ numba>=0.58.0
 # Statistical analysis
 statsmodels>=0.14.0
 arch>=6.1.0  # GARCH models
+
+# Vector DB & Memory
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+scikit-optimize>=0.9.0

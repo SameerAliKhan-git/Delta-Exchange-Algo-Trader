@@ -1,0 +1,16 @@
+# API & Web
+requests>=2.31.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+beautifulsoup4>=4.12.0
+python-dotenv>=1.0.0
+
+# NLP & Sentiment (Torch is large, but needed for FinBERT)
+transformers>=4.30.0
+torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
+ftfy>=6.1.1
+regex>=2023.6.3
+
+# Utilities
+tqdm>=4.66.0
+loguru>=0.7.0

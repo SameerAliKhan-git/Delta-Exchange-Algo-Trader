@@ -431,23 +431,137 @@ class SpreadAnalyzer:
         }
 
 
+class FootprintAnalyzer:
+    """
+    Footprint / Delta Analyzer.
+    
+    Tracks buying vs selling pressure within each candle.
+    """
+    def __init__(self, window: int = 20):
+        self.window = window
+        self.deltas = deque(maxlen=window)
+        self.cumulative_delta = 0.0
+        
+    def update(self, buy_vol: float, sell_vol: float) -> Dict[str, float]:
+        delta = buy_vol - sell_vol
+        self.cumulative_delta += delta
+        self.deltas.append(delta)
+        
+        deltas_arr = np.array(self.deltas)
+        
+        return {
+            'bar_delta': delta,
+            'cumulative_delta': self.cumulative_delta,
+            'delta_zscore': (delta - np.mean(deltas_arr)) / (np.std(deltas_arr) + 1e-10) if len(deltas_arr) > 1 else 0,
+            'is_buying_pressure': delta > 0 and delta > np.std(deltas_arr),
+            'is_selling_pressure': delta < 0 and abs(delta) > np.std(deltas_arr)
+        }
+
+
+class VolumeProfileAnalyzer:
+    """
+    Volume Profile Analyzer.
+    
+    Identifies High Volume Nodes (HVN) and Low Volume Nodes (LVN).
+    """
+    def __init__(self, n_bins: int = 50, decay: float = 0.99):
+        self.n_bins = n_bins
+        self.decay = decay
+        self.profile = {}  # price_bin -> volume
+        self.poc = 0.0  # Point of Control
+        self.vah = 0.0  # Value Area High
+        self.val = 0.0  # Value Area Low
+        
+    def update(self, price: float, volume: float):
+        # Decay old volume
+        for k in self.profile:
+            self.profile[k] *= self.decay
+            
+        # Add new volume
+        bin_size = price * 0.001  # 0.1% bins
+        price_bin = round(price / bin_size) * bin_size
+        self.profile[price_bin] = self.profile.get(price_bin, 0) + volume
+        
+        # Recalculate POC/VA
+        if not self.profile:
+            return
+            
+        sorted_bins = sorted(self.profile.items(), key=lambda x: x[1], reverse=True)
+        self.poc = sorted_bins[0][0]
+        
+        # Calculate Value Area (70% of volume)
+        total_vol = sum(self.profile.values())
+        target_vol = total_vol * 0.70
+        current_vol = 0
+        va_bins = []
+        
+        for p, v in sorted_bins:
+            current_vol += v
+            va_bins.append(p)
+            if current_vol >= target_vol:
+                break
+                
+        self.vah = max(va_bins) if va_bins else price
+        self.val = min(va_bins) if va_bins else price
+        
+    def get_location(self, price: float) -> str:
+        if price > self.vah: return "above_va"
+        if price < self.val: return "below_va"
+        return "inside_va"
+
+
+class LiquidityAnalyzer:
+    """
+    Liquidity / Heatmap Analyzer.
+    
+    Detects buy/sell walls in the order book.
+    """
+    def __init__(self, threshold_ratio: float = 3.0):
+        self.threshold_ratio = threshold_ratio
+        
+    def analyze(self, snapshot: OrderBookSnapshot) -> Dict[str, Any]:
+        if not snapshot.bids or not snapshot.asks:
+            return {}
+            
+        # Calculate average size per level
+        avg_bid_size = np.mean([s for _, s in snapshot.bids])
+        avg_ask_size = np.mean([s for _, s in snapshot.asks])
+        
+        # Find walls
+        buy_walls = []
+        for price, size in snapshot.bids:
+            if size > avg_bid_size * self.threshold_ratio:
+                buy_walls.append((price, size))
+                
+        sell_walls = []
+        for price, size in snapshot.asks:
+            if size > avg_ask_size * self.threshold_ratio:
+                sell_walls.append((price, size))
+                
+        return {
+            'buy_walls': buy_walls,
+            'sell_walls': sell_walls,
+            'nearest_support': buy_walls[0][0] if buy_walls else None,
+            'nearest_resistance': sell_walls[0][0] if sell_walls else None,
+            'support_strength': sum(s for _, s in buy_walls),
+            'resistance_strength': sum(s for _, s in sell_walls)
+        }
+
+
 class MicrostructureStrategy(BaseStrategy):
     """
-    Complete microstructure trading strategy.
-    
-    Combines:
-    1. Order Book Imbalance (OBI)
-    2. Cumulative Volume Delta (CVD)
-    3. Whale detection
-    4. Spread analysis
-    
-    For short-term prediction (hold 1-5 seconds).
+    Market Microstructure Strategy using Order Flow, OBI, and CVD.
     """
-    
     def __init__(self, config: Optional[MicrostructureConfig] = None):
         super().__init__(config or MicrostructureConfig())
         self.config: MicrostructureConfig = self.config
         
+        # Confirmation components
+        self.footprint = FootprintAnalyzer()
+        self.profile = VolumeProfileAnalyzer()
+        self.liquidity = LiquidityAnalyzer()
+        
+        # Strategy components
         self.obi_analyzer = OrderBookImbalance(
             levels=self.config.ob_levels,
             window=50
@@ -460,7 +574,65 @@ class MicrostructureStrategy(BaseStrategy):
         
         self._last_snapshot: Optional[OrderBookSnapshot] = None
         self._features: Dict[str, float] = {}
+        self.is_initialized = False
+
+    def update_snapshot(self, snapshot: OrderBookSnapshot, trade_price: float, trade_vol: float, side: str):
+        # Update components
+        buy_vol = trade_vol if side == 'buy' else 0
+        sell_vol = trade_vol if side == 'sell' else 0
+        
+        self.footprint.update(buy_vol, sell_vol)
+        self.profile.update(trade_price, trade_vol)
+        
+        self.last_snapshot = snapshot
+        
+    def confirm_trade(self, side: str, price: float) -> Tuple[bool, str]:
+        """
+        Confirm if a trade should be taken based on order flow.
+        """
+        reasons = []
+        score = 0
+        
+        # 1. Check Liquidity Walls
+        liq_metrics = self.liquidity.analyze(self.last_snapshot)
+        if side == 'buy':
+            # Don't buy if right below a sell wall
+            if liq_metrics.get('nearest_resistance') and \
+               liq_metrics['nearest_resistance'] < price * 1.001:
+                reasons.append("Rejected: Buying into Resistance Wall")
+                score -= 2
+            # Good if above support
+            if liq_metrics.get('nearest_support') and \
+               liq_metrics['nearest_support'] > price * 0.999:
+                score += 1
+                
+        elif side == 'sell':
+            # Don't sell if right above a buy wall
+            if liq_metrics.get('nearest_support') and \
+               liq_metrics['nearest_support'] > price * 0.999:
+                reasons.append("Rejected: Selling into Support Wall")
+                score -= 2
+        
+        # 2. Check Volume Profile
+        loc = self.profile.get_location(price)
+        if side == 'buy' and loc == 'above_va':
+            score += 1  # Breakout
+        elif side == 'sell' and loc == 'below_va':
+            score += 1  # Breakdown
+            
+        # 3. Check Footprint (Delta)
+        fp_metrics = self.footprint.update(0, 0) # Get current state
+        if side == 'buy' and fp_metrics['cumulative_delta'] > 0:
+            score += 1
+        elif side == 'sell' and fp_metrics['cumulative_delta'] < 0:
+            score += 1
+            
+        if score >= 1:
+            return True, "Confirmed by Order Flow"
+        else:
+            return False, f"Order Flow Weak (Score {score}): {'; '.join(reasons)}"
     
+
     def update(self, data: pd.DataFrame):
         """
         Update with OHLCV data.

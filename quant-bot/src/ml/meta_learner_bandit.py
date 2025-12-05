@@ -227,6 +227,7 @@ class MetaLearnerBandit:
         exploration_bonus: float = 0.1,  # Bonus for under-explored strategies
         min_exploration_frac: float = 0.1,  # Minimum fraction for exploration
         cost_bps: float = 10.0,  # Default transaction cost
+        regret_threshold: float = 0.05, # Threshold for forced exploration
     ):
         self.strategies = strategies
         self.method = method
@@ -235,6 +236,7 @@ class MetaLearnerBandit:
         self.exploration_bonus = exploration_bonus
         self.min_exploration_frac = min_exploration_frac
         self.default_cost_bps = cost_bps
+        self.regret_threshold = regret_threshold
         
         # Initialize arms
         self.arms: Dict[str, StrategyArm] = {}
@@ -407,6 +409,40 @@ class MetaLearnerBandit:
             'selection_type': 'softmax',
             'probabilities': dict(zip(eligible, probs.tolist())),
         }
+
+    def calculate_expected_regret(self) -> float:
+        """
+        Bayesian regret: How much we're potentially losing
+        by not choosing the optimal strategy.
+        """
+        if not self.arms:
+            return 0.0
+            
+        # Calculate means for all strategies
+        means = [arm.get_mean() for arm in self.arms.values()]
+        best_expected_return = max(means) if means else 0.0
+        
+        # Calculate mean of currently selected/active strategies (simplified as average of all for now 
+        # or we could track the last selected one. The prompt implies 'current_strategy').
+        # We'll use the average mean of all arms as a proxy for "current policy performance" 
+        # if we don't have a single "current" strategy, or better, the weighted average based on selection probs.
+        
+        # Let's use the best arm vs the average arm as a simple regret metric for the system state
+        avg_return = sum(means) / len(means) if means else 0.0
+        
+        regret = best_expected_return - avg_return
+        
+        # If regret > threshold, we might want to force exploration (logic to be called by controller)
+        return regret
+
+    def force_exploration_phase(self):
+        """Force a period of high exploration."""
+        logger.info("Forcing exploration phase due to high regret")
+        # Increase exploration fraction temporarily
+        self.min_exploration_frac = max(0.5, self.min_exploration_frac * 2)
+        # Schedule reset (in a real system this would be a timer, here we just set it)
+        # For now, we rely on the caller to manage the duration or decay it back.
+
     
     def update(
         self,
