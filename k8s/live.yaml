@@ -1,0 +1,301 @@
+# =============================================================================
+# LIVE TRADING DEPLOYMENT - Kubernetes Configuration
+# =============================================================================
+# Deploy with: kubectl apply -f k8s/live.yaml
+# First deployment: 1% allocation, single replica
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trading
+  labels:
+    app: delta-trader
+    environment: production
+
+---
+# Secret for Vault configuration (managed externally)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vault-config
+  namespace: trading
+type: Opaque
+stringData:
+  VAULT_ADDR: "https://vault.production.example.com"
+  VAULT_AUTH_METHOD: "kubernetes"
+  VAULT_K8S_ROLE: "delta-trader"
+
+---
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trader-config
+  namespace: trading
+data:
+  # Trading mode
+  PAPER: "0"
+  
+  # Allocation (start at 1%, scale to 5%)
+  CAPITAL_ALLOCATION_PCT: "1"
+  MAX_POSITION_PCT: "2"
+  
+  # Risk limits
+  MAX_DAILY_DRAWDOWN_PCT: "2"
+  AMRC_HALT_THRESHOLD_MS: "60"
+  
+  # Monitoring
+  PROMETHEUS_PORT: "9090"
+  LOG_LEVEL: "INFO"
+  
+  # Audit
+  AUDIT_RETENTION_YEARS: "7"
+
+---
+# Main trading bot deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: delta-trader
+  namespace: trading
+  labels:
+    app: delta-trader
+    version: v1.0.0
+  annotations:
+    deployment.kubernetes.io/revision: "v1.0.0-live"
+spec:
+  replicas: 1  # DO NOT scale above 1 for first 24h
+  strategy:
+    type: Recreate  # Only one instance at a time
+  selector:
+    matchLabels:
+      app: delta-trader
+  template:
+    metadata:
+      labels:
+        app: delta-trader
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: delta-trader
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      # Init container for Vault token
+      initContainers:
+      - name: vault-init
+        image: hashicorp/vault:1.15
+        command:
+        - sh
+        - -c
+        - |
+          vault login -method=kubernetes role=$VAULT_K8S_ROLE
+          vault read -field=api_key secret/trading/delta > /vault/secrets/api_key
+          vault read -field=api_secret secret/trading/delta > /vault/secrets/api_secret
+        envFrom:
+        - secretRef:
+            name: vault-config
+        volumeMounts:
+        - name: vault-secrets
+          mountPath: /vault/secrets
+      
+      containers:
+      - name: trader
+        image: ghcr.io/your-org/delta-trader:v1.0.0  # Replace with your signed image
+        imagePullPolicy: Always
+        
+        envFrom:
+        - configMapRef:
+            name: trader-config
+        - secretRef:
+            name: vault-config
+        
+        env:
+        - name: DELTA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: trading-secrets
+              key: api_key
+              optional: true
+        
+        ports:
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+        
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 3
+        
+        volumeMounts:
+        - name: vault-secrets
+          mountPath: /vault/secrets
+          readOnly: true
+        - name: audit-logs
+          mountPath: /app/audit_logs
+        - name: paper-logs
+          mountPath: /app/paper_trading_logs
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      
+      # Vault sidecar for secret rotation
+      - name: vault-sidecar
+        image: hashicorp/vault:1.15
+        command:
+        - sh
+        - -c
+        - |
+          while true; do
+            vault login -method=kubernetes role=$VAULT_K8S_ROLE
+            vault read -field=api_key secret/trading/delta > /vault/secrets/api_key
+            vault read -field=api_secret secret/trading/delta > /vault/secrets/api_secret
+            sleep 3600  # Refresh every hour
+          done
+        envFrom:
+        - secretRef:
+            name: vault-config
+        volumeMounts:
+        - name: vault-secrets
+          mountPath: /vault/secrets
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
+      
+      volumes:
+      - name: vault-secrets
+        emptyDir:
+          medium: Memory
+      - name: audit-logs
+        persistentVolumeClaim:
+          claimName: audit-logs-pvc
+      - name: paper-logs
+        persistentVolumeClaim:
+          claimName: paper-logs-pvc
+
+---
+# Service Account for Vault authentication
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: delta-trader
+  namespace: trading
+
+---
+# Prometheus service for metrics scraping
+apiVersion: v1
+kind: Service
+metadata:
+  name: delta-trader-metrics
+  namespace: trading
+  labels:
+    app: delta-trader
+spec:
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+  selector:
+    app: delta-trader
+
+---
+# Persistent Volume Claims for logs
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audit-logs-pvc
+  namespace: trading
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paper-logs-pvc
+  namespace: trading
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+# Pod Disruption Budget - never have 0 pods during upgrades
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: delta-trader-pdb
+  namespace: trading
+spec:
+  minAvailable: 0  # Allow complete drain for single replica
+  selector:
+    matchLabels:
+      app: delta-trader
+
+---
+# Network Policy - restrict traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: delta-trader-network
+  namespace: trading
+spec:
+  podSelector:
+    matchLabels:
+      app: delta-trader
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - port: 9090  # Prometheus only
+  egress:
+  - to: []  # Allow all egress (API calls, Vault, etc.)

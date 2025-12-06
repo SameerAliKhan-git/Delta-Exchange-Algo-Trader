@@ -1,0 +1,1 @@
+{"date": "2025-11-25", "all_passed": true, "scenarios": [{"name": "flash_crash", "passed": true, "halt_time_ms": 45}, {"name": "feed_outage", "passed": true, "halt_time_ms": 52}]}
